@@ -32,8 +32,8 @@ class GeminiClient:
         self.delay = float(os.environ.get("GEMINI_DELAY_SECONDS", "1"))
 
         # Model names from environment
-        self.triage_model = os.environ.get("GEMINI_TRIAGE_MODEL", "gemini-2.0-flash")
-        self.smart_model = os.environ.get("GEMINI_SMART_MODEL", "gemini-2.5-pro-preview-05-06")
+        self.triage_model = os.environ.get("GEMINI_TRIAGE_MODEL", "gemini-3-flash-preview")
+        self.smart_model = os.environ.get("GEMINI_SMART_MODEL", "gemini-3.1-pro-preview")
 
     def call(self, model: str, prompt: str, json_mode: bool = False) -> str:
         """

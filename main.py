@@ -390,8 +390,7 @@ async def index(request: Request):
                     "reports": [],
                 }
 
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", {
         "own_channel": own_channel,
         "competitors": competitors,
     })
@@ -444,8 +443,7 @@ async def dashboard(request: Request, username: str):
     own_username = _get_own_username()
     is_own_channel = (username == own_username)
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "username": username,
         "metadata": metadata,
         "videos": metadata["videos"],
@@ -467,8 +465,7 @@ async def view_report(request: Request, username: str, filename: str):
 
     content = report_path.read_text(encoding="utf-8")
 
-    return templates.TemplateResponse("report.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "report.html", {
         "username": username,
         "filename": filename,
         "content": content,
