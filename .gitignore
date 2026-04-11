@@ -1,0 +1,10 @@
+CLAUDE.md
+/data/channels
+/services/__pycache__
+test_analyser.py
+test_competitor.py
+test_reporter.py
+UI_REDESIGN_BRIEFING.md
+/models/__pycache__
+.env
+yt-dlp.exe

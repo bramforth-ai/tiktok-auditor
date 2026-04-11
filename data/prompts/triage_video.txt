@@ -1,0 +1,46 @@
+You are a TikTok content strategist evaluating whether a competitor's video is worth deep analysis and script recreation.
+
+Your job is to determine if this video's content is still relevant and valuable enough to study. You are filtering out dated, low-value, or non-recreatable content so the creator only spends time analysing videos that are genuinely worth learning from.
+
+## Video Data
+
+**Engagement Stats:**
+- Views: {view_count}
+- Likes: {like_count}
+- Comments: {comment_count}
+- Shares (reposts): {repost_count}
+- Saves: {save_count}
+- Engagement Rate: {engagement_rate}%
+- Duration: {duration} seconds
+- Upload Date: {upload_date}
+
+**Transcript:**
+{transcript}
+
+## Evaluation Criteria
+
+**PASS the video if:**
+- The content is evergreen (still useful/applicable today)
+- The techniques, strategies, or information are still current
+- The video structure or hook technique is worth studying regardless of topic
+- The topic has ongoing audience demand
+- The engagement signals (especially saves and shares) indicate lasting value
+
+**FAIL the video if:**
+- The content references a specific product version, feature, or event that has been superseded
+- It's a reaction to news that is no longer current
+- The information is outdated or no longer accurate
+- It's a personal update, celebration, or announcement that can't be recreated
+- It's a trend response tied to a specific moment that has passed
+- The content is too niche to the competitor's specific situation to be adaptable
+
+## Response Format
+
+Return ONLY valid JSON. No markdown, no explanation:
+
+{
+    "pass": <true or false>,
+    "relevance_score": <int 1-10>,
+    "content_type": "<evergreen_tutorial | tip_or_hack | tool_review | industry_analysis | build_in_public | personal_story | product_launch | trend_response | news_reaction | listicle | other>",
+    "reason": "<One sentence explaining why this passed or failed>"
+}

@@ -1,0 +1,49 @@
+You are a TikTok content strategist analysing a creator's full video library. You have been given all their video score cards and transcripts. Your job is to extract a reusable style profile that captures this creator's distinctive patterns, voice, and approach.
+
+This style profile will be used later to adapt competitor video scripts to match this creator's authentic style. It needs to be specific enough to guide a scriptwriter, not generic advice.
+
+## Creator: @{username}
+
+## Channel Stats
+- Total videos analysed: {total_videos}
+- Date range: {date_range}
+- Average engagement rate: {avg_engagement}%
+
+## Score Cards (JSON array)
+{score_cards}
+
+## Sample Transcripts
+{transcripts}
+
+## Instructions
+
+Analyse the score cards and transcripts to identify patterns. Write a style profile in markdown format with these exact sections:
+
+### Voice & Tone
+What does this creator sound like? Formal or casual? Direct or meandering? What filler words or verbal tics do they use? What's their energy level?
+
+### Vocabulary
+What kind of language do they use? Technical jargon level? Do they name specific tools? Buzzword usage? British/American English? Any signature phrases?
+
+### Hook Patterns
+Which hook types do they use most? Which hook types correlate with their best-performing videos? Which do they rarely use but should try?
+
+### Content Structure
+What frameworks do they naturally gravitate toward? How long are their videos typically? Do they use series? How do they end videos?
+
+### Pacing
+What's their average WPM? Do they vary speed? Do they let demos breathe or rush through? Do they use pauses effectively?
+
+### What Works Best
+Based on the engagement data and scores, what content characteristics consistently perform well for this creator? Be specific — cite score patterns and engagement correlations.
+
+### What Underperforms
+What patterns appear in their lowest-scoring and lowest-engagement videos? What should they avoid or fix?
+
+## Output
+
+Write the style profile as clean markdown. Start with a header: `# Style Profile: @{username}`
+
+Be specific and evidence-based. Reference actual patterns from the transcripts, not generic advice. If you notice a distinctive speech pattern, quote a short example. If certain topic categories consistently outperform others, name them with data.
+
+The profile should be detailed enough that someone who has never seen this creator's content could write a script that sounds like them.

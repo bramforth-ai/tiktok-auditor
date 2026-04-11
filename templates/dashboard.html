@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>@{{ username }} — TikTok Auditor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<!-- Header -->
+<header class="site-header">
+    <div class="logo">TikTok <em>Auditor</em></div>
+    <div class="header-actions">
+        <a href="/">← Home</a>
+    </div>
+</header>
+
+<div class="layout">
+
+    <!-- ============================================================ -->
+    <!-- STATS BAR -->
+    <!-- ============================================================ -->
+    {% set rates = videos | map(attribute='engagement_rate') | list %}
+    {% set avg_rate = "%.2f" | format(rates | sum / rates | length) if rates | length > 0 else "0.00" %}
+    {% set scored_count = videos | selectattr('status', 'equalto', 'scored') | list | length %}
+    {% set analysed_count = videos | selectattr('status', 'equalto', 'analysed') | list | length %}
+    {% set failed_count = videos | selectattr('status', 'equalto', 'failed') | list | length %}
+    {% set max_er = rates | max if rates | length > 0 else 1 %}
+
+    <div class="stats-bar">
+        <div class="stat-card">
+            <div class="stat-value" style="font-size:17px; font-family: var(--font-mono);">@{{ username }}</div>
+            <div class="stat-label">{% if is_own_channel %}Your Channel{% else %}Competitor{% endif %}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ metadata.total_videos }}</div>
+            <div class="stat-label">Videos Scanned</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ scored_count + analysed_count }}</div>
+            <div class="stat-label">Processed</div>
+        </div>
+        <div class="stat-card accent">
+            <div class="stat-value">{{ avg_rate }}%</div>
+            <div class="stat-label">Avg Engagement</div>
+        </div>
+        {% if is_own_channel %}
+        <div class="stat-card">
+            <div class="stat-value" style="font-size:16px;">{% if has_profile %}✓{% else %}—{% endif %}</div>
+            <div class="stat-label">Style Profile</div>
+        </div>
+        {% endif %}
+    </div>
+
+
+    <!-- ============================================================ -->
+    <!-- MODE-SPECIFIC HEADER -->
+    <!-- ============================================================ -->
+    {% if is_own_channel %}
+    <div class="callout info">
+        <span class="callout-icon">◎</span>
+        <div>
+            <strong>Self-Audit</strong> — Select videos below and score them against best practices.
+            {% if has_profile %}Your style profile is ready and will be used for competitor analysis.
+            {% else %}Once scored, generate your audit report to create a style profile.{% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="callout info">
+        <span class="callout-icon">◉</span>
+        <div>
+            <strong>Competitor Analysis</strong> — Select top performers to analyse. Videos are triaged for relevance, then analysed with recreated scripts.
+        </div>
+    </div>
+
+    <!-- Style profile indicator -->
+    {% if own_username %}
+        {% set own_has_profile = style_profiles | select('equalto', own_username) | list | length > 0 %}
+        {% if own_has_profile %}
+        <div class="profile-status active">
+            ✓ Using style profile from <strong>@{{ own_username }}</strong> — scripts will match your voice
+        </div>
+        {% else %}
+        <div class="profile-status missing">
+            No style profile for @{{ own_username }}. Run a Self-Audit first for personalised scripts. Using generic style.
+        </div>
+        {% endif %}
+    {% else %}
+    <div class="profile-status missing">
+        No own channel set up. Set one up on the Home page for personalised scripts. Using generic style.
+    </div>
+    {% endif %}
+    {% endif %}
+
+
+    <!-- ============================================================ -->
+    <!-- REPORTS -->
+    <!-- ============================================================ -->
+    {% if reports %}
+    <div class="card" style="padding: 18px 24px;">
+        <div class="flex-between">
+            <div class="card-title" style="margin-bottom:0; font-size:13px;">Reports</div>
+            <div class="reports-row">
+                {% for report in reports %}
+                <a href="/channel/{{ username }}/report/{{ report.filename }}" class="btn btn-ghost btn-sm">{{ report.filename }}</a>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+
+    <!-- ============================================================ -->
+    <!-- VIDEO TABLE SECTION -->
+    <!-- ============================================================ -->
+    <div id="table-section">
+    <div class="card">
+        <div class="flex-between mb-16">
+            <div class="card-title" style="margin-bottom:0;">Videos</div>
+            <div class="flex-center gap-12">
+                <div class="quick-select">
+                    <span class="qs-label">Select:</span>
+                    <button class="btn btn-ghost btn-sm" onclick="selectTop(10)">Next 10</button>
+                    <button class="btn btn-ghost btn-sm" onclick="selectTop(20)">Next 20</button>
+                    <button class="btn btn-ghost btn-sm" onclick="selectTop(50)">Next 50</button>
+                    <button class="btn btn-ghost btn-sm" onclick="selectTop(100)">Next 100</button>
+                    <button class="btn btn-ghost btn-sm" onclick="selectAll()">All</button>
+                    <button class="btn btn-ghost btn-sm" onclick="selectUnprocessed()">Unprocessed</button>
+                    <button class="btn btn-ghost btn-sm" onclick="selectNone()">None</button>
+                </div>
+                <div class="page-size-select">
+                    <span class="qs-label">Show:</span>
+                    <select id="page-size" class="input input-sm" onchange="setPageSize(parseInt(this.value))" style="width:72px; padding:5px 8px;">
+                        <option value="50">50</option>
+                        <option value="100" selected>100</option>
+                        <option value="250">250</option>
+                        <option value="500">500</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <div class="table-wrap">
+            <table class="vtable" id="video-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="select-all-cb"></th>
+                        <th data-sort="title">Title</th>
+                        <th data-sort="upload_date">Date</th>
+                        <th data-sort="view_count">Views</th>
+                        <th data-sort="like_count">Likes</th>
+                        <th data-sort="save_count">Saves</th>
+                        <th data-sort="repost_count">Shares</th>
+                        <th data-sort="comment_count">Comments</th>
+                        <th data-sort="engagement_rate">Eng. Rate</th>
+                        <th data-sort="duration">Dur.</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for v in videos %}
+                    {% if v.view_count > 0 %}
+                    <tr data-status="{{ v.status }}"
+                        data-video-id="{{ v.video_id }}"
+                        data-title="{{ v.title }}"
+                        data-upload_date="{{ v.upload_date }}"
+                        data-view_count="{{ v.view_count }}"
+                        data-like_count="{{ v.like_count }}"
+                        data-save_count="{{ v.save_count }}"
+                        data-repost_count="{{ v.repost_count }}"
+                        data-comment_count="{{ v.comment_count }}"
+                        data-engagement_rate="{{ v.engagement_rate }}"
+                        data-duration="{{ v.duration }}">
+                        <td><input type="checkbox" class="video-checkbox" value="{{ v.video_id }}"></td>
+                        <td class="cell-title" title="{{ v.title }}">{{ v.title[:65] }}</td>
+                        <td>{{ v.upload_date[:4] }}-{{ v.upload_date[4:6] }}-{{ v.upload_date[6:8] if v.upload_date|length >= 8 else v.upload_date }}</td>
+                        <td class="cell-num">{{ "{:,}".format(v.view_count) }}</td>
+                        <td class="cell-num">{{ "{:,}".format(v.like_count) }}</td>
+                        <td class="cell-num">{{ "{:,}".format(v.save_count) }}</td>
+                        <td class="cell-num">{{ "{:,}".format(v.repost_count) }}</td>
+                        <td class="cell-num">{{ "{:,}".format(v.comment_count) }}</td>
+                        <td class="cell-engagement">
+                            {{ "%.2f" | format(v.engagement_rate) }}%
+                            {% set bar_w = (v.engagement_rate / max_er * 100) | round(1) if max_er > 0 else 0 %}
+                            <div class="spark-bar" style="width: {{ bar_w }}%;"></div>
+                        </td>
+                        <td class="cell-num">{{ v.duration }}s</td>
+                        <td>
+                            {% if v.status == 'scored' %}
+                            <span class="badge badge-scored">✓ scored</span>
+                            {% elif v.status == 'analysed' %}
+                            <span class="badge badge-analysed">◆ analysed</span>
+                            {% elif v.status == 'failed' %}
+                            <span class="badge badge-failed" title="{{ processed.get(v.video_id, {}).get('error', '') }}">✗ failed</span>
+                            {% elif v.status == 'triaged_out' %}
+                            <span class="badge badge-triaged" data-reason="{{ processed.get(v.video_id, {}).get('triage_reason', 'No reason recorded') }}">⊘ triaged</span>
+                            {% elif v.status == 'no_transcript' %}
+                            <span class="badge badge-notranscript">○ no transcript</span>
+                            {% else %}
+                            <span class="badge badge-unprocessed">—</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination">
+            <button class="btn btn-ghost btn-sm" id="page-prev" onclick="goToPage(currentPage - 1)" disabled>← Prev</button>
+            <span class="page-info" id="page-info">Page 1 of 1</span>
+            <button class="btn btn-ghost btn-sm" id="page-next" onclick="goToPage(currentPage + 1)" disabled>Next →</button>
+        </div>
+
+        <!-- Action Bar (sticky) -->
+        <div class="action-bar action-bar-sticky" id="action-bar">
+            <span class="selected-count" id="selected-count">0 selected</span>
+            <div class="action-buttons">
+                {% if failed_count > 0 %}
+                <button class="btn btn-ghost btn-sm" onclick="retryFailed()">Retry {{ failed_count }} Failed</button>
+                {% endif %}
+
+                {% if is_own_channel %}
+                <button class="btn btn-primary" id="process-btn" disabled
+                        onclick="startProcessing('{{ username }}', 'self_audit')">
+                    Run Self-Audit
+                </button>
+                <button class="btn btn-success"
+                        onclick="generateReport('{{ username }}', 'self_audit')">
+                    Generate Audit Report
+                </button>
+                {% else %}
+                <button class="btn btn-primary" id="process-btn" disabled
+                        onclick="startProcessing('{{ username }}', 'competitor_intel')">
+                    Run Competitor Analysis
+                </button>
+                <button class="btn btn-success"
+                        onclick="generateReport('{{ username }}', 'competitor_intel')">
+                    Generate Competitor Report
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Re-scan (collapsed) -->
+    <details class="collapsible card" style="padding:16px 24px;">
+        <summary>Re-scan channel (expand date range or refresh)</summary>
+        <div class="form-row">
+            <div class="form-group"><label class="form-label">From</label><input type="date" class="input" id="rescan-date-from" style="width:150px;"></div>
+            <div class="form-group"><label class="form-label">To</label><input type="date" class="input" id="rescan-date-to" style="width:150px;"></div>
+            <div class="form-group"><label class="form-label">Max Videos</label><input type="number" class="input input-sm" id="rescan-max-videos" placeholder="All" min="1"></div>
+            <button class="btn btn-ghost" id="rescan-btn" onclick="rescanChannel('{{ username }}')">Re-scan</button>
+        </div>
+        <div class="scan-progress" id="rescan-progress">
+            <div class="scan-ring">
+                <div class="ring-visual"><div class="ring-circle"></div><div class="ring-count" id="rescan-scan-count">0</div></div>
+                <div class="scan-status" id="rescan-progress-text">Scanning…</div>
+            </div>
+        </div>
+    </details>
+    </div>
+
+
+    <!-- ============================================================ -->
+    <!-- PROCESSING SECTION (hidden by default) -->
+    <!-- ============================================================ -->
+    <div class="processing-panel" id="processing-section">
+    <div class="card">
+        <div class="card-title mb-16"><span class="icon">⟳</span> Processing</div>
+
+        <div class="progress-header">
+            <span class="progress-label" id="progress-text">Starting…</span>
+            <span class="progress-pct" id="progress-pct">0%</span>
+        </div>
+        <div class="progress-track">
+            <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+
+        <div class="progress-counters">
+            {% if is_own_channel %}
+            <div class="counter">Scored<span class="val" id="proc-scored">0</span></div>
+            {% else %}
+            <div class="counter">Analysed<span class="val" id="proc-scored">0</span></div>
+            <div class="counter">Triaged Out<span class="val" id="proc-triaged">0</span></div>
+            {% endif %}
+            <div class="counter">Failed<span class="val" id="proc-failed">0</span></div>
+            <div class="counter">No Transcript<span class="val" id="proc-skipped">0</span></div>
+        </div>
+
+        <button class="btn btn-danger" id="cancel-btn" onclick="cancelProcessing()">Cancel</button>
+
+        <div class="results-feed" id="results-feed"></div>
+
+        <div class="processing-done" id="processing-finished">
+            <div class="done-message">✓ Processing complete</div>
+            <div class="flex-center gap-8">
+                {% if is_own_channel %}
+                <button class="btn btn-success" onclick="generateReport('{{ username }}', 'self_audit')">Generate Audit Report</button>
+                {% else %}
+                <button class="btn btn-success" onclick="generateReport('{{ username }}', 'competitor_intel')">Generate Competitor Report</button>
+                {% endif %}
+                <button class="btn btn-ghost" onclick="window.location.reload()">Back to Dashboard</button>
+            </div>
+        </div>
+    </div>
+    </div>
+
+</div>
+
+<!-- Report generation overlay -->
+<div class="overlay" id="report-overlay">
+    <div class="overlay-box">
+        <div class="spinner-lg"></div>
+        <p>Generating report…</p>
+        <p class="overlay-sub">This may take 30–60 seconds</p>
+    </div>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+    window.currentMode = '{{ "self_audit" if is_own_channel else "competitor_intel" }}';
+    window.ownUsername = '{{ own_username or "" }}';
+    window.dashboardUsername = '{{ username }}';
+</script>
+</body>
+</html>
