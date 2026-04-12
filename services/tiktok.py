@@ -22,17 +22,7 @@ def _get_channel_dir(username: str) -> Path:
 
 
 def _find_ytdlp() -> str:
-    """
-    Find yt-dlp executable.
-    Checks project root first (where yt-dlp.exe lives), then PATH.
-    """
-    # Check project root
-    project_root = Path(__file__).parent.parent
-    local_ytdlp = project_root / "yt-dlp.exe"
-    if local_ytdlp.exists():
-        return str(local_ytdlp)
-
-    # Fall back to PATH
+    """Find yt-dlp executable on PATH."""
     return "yt-dlp"
 
 
