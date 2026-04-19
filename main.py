@@ -22,7 +22,7 @@ from services.gemini_client import GeminiClient
 from services.analyser import run_self_audit, run_competitor_analysis
 from services.reporter import (
     generate_full_audit,
-    generate_competitor_report,
+    generate_competitor_index,
     load_style_profile,
 )
 
@@ -214,7 +214,10 @@ def _run_self_audit_bg(username: str, video_ids: list[str]):
 
 
 def _run_competitor_analysis_bg(
-    username: str, video_ids: list[str], style_profile_username: str = None
+    username: str,
+    video_ids: list[str],
+    style_profile_username: str = None,
+    production_style: str = "talking_head",
 ):
     """Run competitor analysis in background thread."""
     try:
@@ -229,7 +232,7 @@ def _run_competitor_analysis_bg(
         processing_state["stage"] = "triage"
         passed_ids = []
 
-        from services.analyser import triage_video, analyse_video
+        from services.analyser import triage_video, rewrite_video_script
 
         for i, video_id in enumerate(video_ids):
             if processing_state["cancel_requested"]:
@@ -284,9 +287,20 @@ def _run_competitor_analysis_bg(
             processing_state["current_video"] = None
             return
 
-        # STAGE 2: ANALYSIS
-        processing_state["stage"] = "analysis"
+        # STAGE 2: REWRITE
+        processing_state["stage"] = "rewrite"
         processing_state["total"] = processing_state["completed"] + len(passed_ids)
+
+        if not style_profile_username:
+            print("[COMPETITOR] No style profile selected — cannot rewrite scripts. Skipping stage 2.")
+            for vid in passed_ids:
+                processing_state["failed"] += 1
+                processing_state["results"].append({
+                    "video_id": vid,
+                    "status": "failed",
+                    "error": "No creator style profile selected — choose one before running.",
+                })
+            return
 
         for i, video_id in enumerate(passed_ids):
             if processing_state["cancel_requested"]:
@@ -296,14 +310,18 @@ def _run_competitor_analysis_bg(
             processing_state["current_index"] = processing_state["completed"] + 1
 
             try:
-                result = analyse_video(username, video_id, gemini, style_profile)
+                result = rewrite_video_script(
+                    username, video_id, gemini, style_profile,
+                    style_profile_username, production_style,
+                )
                 processing_state["completed"] += 1
 
                 if result["success"]:
-                    processing_state["scored"] += 1  # reuse "scored" for "analysed"
+                    processing_state["scored"] += 1  # reuse counter for "rewritten"
                     processing_state["results"].append({
                         "video_id": video_id,
-                        "status": "analysed",
+                        "status": "rewritten",
+                        "script_path": result.get("script_path"),
                     })
                 else:
                     processing_state["failed"] += 1
@@ -472,6 +490,31 @@ async def view_report(request: Request, username: str, filename: str):
     })
 
 
+@app.get("/scripts/{own_username}/{competitor_username}/{date}/{video_id}")
+async def view_script(
+    request: Request,
+    own_username: str,
+    competitor_username: str,
+    date: str,
+    video_id: str,
+):
+    """View a rewritten competitor script."""
+    script_path = (
+        DATA_DIR / own_username / "generated_scripts"
+        / f"competitor_{competitor_username}" / date / f"{video_id}.md"
+    )
+    if not script_path.exists():
+        raise HTTPException(status_code=404, detail="Script not found")
+
+    content = script_path.read_text(encoding="utf-8")
+
+    return templates.TemplateResponse(request, "report.html", {
+        "username": competitor_username,
+        "filename": f"{video_id}.md",
+        "content": content,
+    })
+
+
 # ============================================================
 # API Routes
 # ============================================================
@@ -564,6 +607,9 @@ async def api_process(request: Request):
     video_ids = body.get("video_ids", [])
     mode = body.get("mode", "self_audit")
     style_profile_username = body.get("style_profile_username")
+    production_style = body.get("production_style", "talking_head")
+    if production_style not in ("talking_head", "editorial"):
+        production_style = "talking_head"
 
     if not username or not video_ids:
         return JSONResponse({"error": "Username and video_ids required"}, status_code=400)
@@ -583,7 +629,7 @@ async def api_process(request: Request):
     else:
         thread = threading.Thread(
             target=_run_competitor_analysis_bg,
-            args=(username, video_ids, style_profile_username),
+            args=(username, video_ids, style_profile_username, production_style),
             daemon=True,
         )
 
@@ -636,10 +682,102 @@ async def api_set_own_channel(request: Request):
 async def api_delete_style_profile(username: str):
     """Delete a channel's style profile."""
     profile_path = DATA_DIR / username / "style_profile.md"
+    lock_path = DATA_DIR / username / "style_profile.md.locked"
+    deleted = False
     if profile_path.exists():
         profile_path.unlink()
+        deleted = True
+    if lock_path.exists():
+        lock_path.unlink()
+    if deleted:
         return {"success": True, "message": f"Style profile for @{username} deleted"}
     return {"success": False, "error": "No style profile found"}
+
+
+# ============================================================
+# Profile Management
+# ============================================================
+
+
+@app.get("/profile/{username}")
+async def profile_page(request: Request, username: str):
+    """Profile management screen — view, edit lazy defaults, regenerate."""
+    profile_path = DATA_DIR / username / "style_profile.md"
+    lock_path = DATA_DIR / username / "style_profile.md.locked"
+    lazy_path = DATA_DIR / username / "lazy_defaults.md"
+
+    profile_content = profile_path.read_text(encoding="utf-8") if profile_path.exists() else ""
+    lazy_defaults = lazy_path.read_text(encoding="utf-8") if lazy_path.exists() else ""
+    is_locked = lock_path.exists()
+
+    scores_dir = DATA_DIR / username / "scores"
+    score_count = len(list(scores_dir.glob("*.json"))) if scores_dir.exists() else 0
+    # Skip the `<id>_raw.txt` debug files (not counted as scorecards)
+    if scores_dir.exists():
+        score_count = len([
+            p for p in scores_dir.glob("*.json") if not p.stem.endswith("_raw")
+        ])
+
+    last_generated = None
+    if profile_path.exists():
+        last_generated = datetime.fromtimestamp(
+            profile_path.stat().st_mtime
+        ).strftime("%Y-%m-%d %H:%M")
+
+    return templates.TemplateResponse(request, "profile.html", {
+        "username": username,
+        "profile_content": profile_content,
+        "lazy_defaults": lazy_defaults,
+        "is_locked": is_locked,
+        "score_count": score_count,
+        "last_generated": last_generated,
+        "has_profile": profile_path.exists(),
+    })
+
+
+@app.post("/api/profile/{username}/lazy_defaults")
+async def api_save_lazy_defaults(username: str, request: Request):
+    """Save the creator's self-declared lazy defaults."""
+    body = await request.json()
+    content = body.get("content", "").strip()
+    lazy_path = DATA_DIR / username / "lazy_defaults.md"
+    lazy_path.parent.mkdir(parents=True, exist_ok=True)
+    if content:
+        lazy_path.write_text(content, encoding="utf-8")
+    elif lazy_path.exists():
+        lazy_path.unlink()
+    return {"success": True}
+
+
+@app.post("/api/profile/{username}/unlock")
+async def api_unlock_profile(username: str):
+    """Remove the lock sentinel so regeneration can overwrite the profile."""
+    lock_path = DATA_DIR / username / "style_profile.md.locked"
+    if lock_path.exists():
+        lock_path.unlink()
+    return {"success": True}
+
+
+@app.post("/api/profile/{username}/regenerate")
+async def api_regenerate_profile(username: str):
+    """Regenerate the style profile from current scorecards."""
+    from services.reporter import generate_style_profile
+
+    lock_path = DATA_DIR / username / "style_profile.md.locked"
+    profile_path = DATA_DIR / username / "style_profile.md"
+    if lock_path.exists() and profile_path.exists():
+        return JSONResponse(
+            {"error": "Profile is locked. Unlock first."}, status_code=409
+        )
+
+    try:
+        gemini = GeminiClient()
+        path = generate_style_profile(username, gemini)
+        return {"success": True, "path": path}
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.post("/api/report/generate")
@@ -654,9 +792,8 @@ async def api_generate_report(request: Request):
         return JSONResponse({"error": "Username required"}, status_code=400)
 
     try:
-        gemini = GeminiClient()
-
         if mode == "self_audit":
+            gemini = GeminiClient()
             result = generate_full_audit(username, gemini)
             return {
                 "success": True,
@@ -664,10 +801,10 @@ async def api_generate_report(request: Request):
                 "filename": Path(result["audit_report_path"]).name,
             }
         else:
-            report_path = generate_competitor_report(
+            # Competitor mode: no LLM call — index the already-generated scripts.
+            report_path = generate_competitor_index(
                 competitor_username=username,
                 style_profile_username=style_profile_username,
-                gemini=gemini,
             )
             return {
                 "success": True,
@@ -675,6 +812,8 @@ async def api_generate_report(request: Request):
                 "filename": Path(report_path).name,
             }
 
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

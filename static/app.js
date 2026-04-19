@@ -530,9 +530,11 @@ async function startProcessing(username, mode, videoIds) {
 
     const body = { username, video_ids: ids, mode };
 
-    // Auto-inject style profile for competitor analysis
+    // Auto-inject style profile + production style for competitor analysis
     if (mode === 'competitor_intel' && window.ownUsername) {
         body.style_profile_username = window.ownUsername;
+        const psEl = document.getElementById('production-style');
+        body.production_style = psEl ? psEl.value : 'talking_head';
     }
 
     try {
@@ -620,7 +622,7 @@ function renderProcessingUI(data) {
             let icon = '○';
             let statusText = r.status || 'processing';
 
-            if (r.status === 'scored' || r.status === 'analysed') {
+            if (r.status === 'scored' || r.status === 'rewritten') {
                 icon = '✓'; iconClass = 'success';
                 statusText = r.status;
             } else if (r.status === 'passed_triage') {

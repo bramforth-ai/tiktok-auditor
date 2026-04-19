@@ -353,13 +353,56 @@ def _build_triage_prompt(video_id: str, stats: dict, transcript: str) -> str:
     return prompt
 
 
-def _build_analysis_prompt(
-    video_id: str, stats: dict, transcript: str, style_profile: str = None
+PRODUCTION_STYLE_BLOCKS = {
+    "talking_head": (
+        "**Style: Talking Head (default)**\n\n"
+        "This creator films simple talking-head videos, occasionally with screen "
+        "recordings for software demos or green-screen with a single reference image "
+        "behind them. They do NOT use b-roll, multi-location cuts, stock footage, "
+        "zoom effects, transition effects, music cues, or cutaways to unrelated "
+        "visuals.\n\n"
+        "Stage directions in this rewrite MUST be limited to this small set:\n"
+        "- `[talking head]` — creator speaking straight to camera\n"
+        "- `[screen recording: <what's on screen>]` — for software or UI demos\n"
+        "- `[green screen: <description of image behind them>]` — for news reactions "
+        "or commentary on an external article, tweet, or product page\n"
+        "- `[text overlay: <under 5 words>]` — for emphasis on a key phrase. Use sparingly.\n\n"
+        "FORBIDDEN directions (do not emit any variant of these): `[b-roll]`, "
+        "`[cut to ...]`, `[jump cut]`, `[stock footage]`, `[music]`, `[sound effect]`, "
+        "`[zoom in]`, `[slow motion]`, `[transition]`, `[montage]`, or any direction "
+        "that implies the creator needs to source external footage.\n\n"
+        "Write the script so it can be read straight into camera from a teleprompter "
+        "with minimal production work. If the competitor's original relies on heavy "
+        "editing, translate the visual intent into spoken emphasis and one of the "
+        "allowed stage directions — do not replicate the editorial style."
+    ),
+    "editorial": (
+        "**Style: Editorial**\n\n"
+        "This creator edits with b-roll, cutaways, text overlays, and visual effects. "
+        "Use full stage directions — jump cuts, screen recordings, b-roll, text "
+        "overlays, transitions — wherever they enhance the message. Match the "
+        "competitor's editorial density where it serves the hook and retention."
+    ),
+}
+
+
+def _build_rewrite_prompt(
+    video_id: str,
+    competitor_username: str,
+    stats: dict,
+    transcript: str,
+    style_profile: str,
+    production_style: str = "talking_head",
 ) -> str:
-    """Build the analysis + script generation prompt."""
-    template = _load_prompt("analyse_and_generate.txt")
+    """Build the competitor-script rewrite prompt (translation, not ideation)."""
+    template = _load_prompt("competitor_script.txt")
+
+    production_block = PRODUCTION_STYLE_BLOCKS.get(
+        production_style, PRODUCTION_STYLE_BLOCKS["talking_head"]
+    )
 
     prompt = template.replace("{video_id}", video_id)
+    prompt = prompt.replace("{competitor_username}", competitor_username)
     prompt = prompt.replace("{view_count}", str(stats.get("view_count", 0)))
     prompt = prompt.replace("{like_count}", str(stats.get("like_count", 0)))
     prompt = prompt.replace("{comment_count}", str(stats.get("comment_count", 0)))
@@ -369,23 +412,13 @@ def _build_analysis_prompt(
     prompt = prompt.replace("{duration}", str(stats.get("duration", 0)))
     prompt = prompt.replace("{upload_date}", stats.get("upload_date", ""))
     prompt = prompt.replace("{transcript}", transcript)
-
-    # Style profile injection
-    if style_profile:
-        style_instructions = (
-            "## Creator Style Profile\n\n"
-            "Adapt the recreated script to match this creator's authentic voice and style. "
-            "Preserve the structural elements that drove engagement in the original, "
-            "but write the script as if this creator were delivering it.\n\n"
-            f"{style_profile}"
-        )
-    else:
-        style_instructions = (
-            "Write the recreated script in a clear, direct, tutorial style "
-            "suitable for a tech/AI creator to adapt to their own voice."
-        )
-
-    prompt = prompt.replace("{style_instructions}", style_instructions)
+    prompt = prompt.replace(
+        "{style_profile}",
+        style_profile
+        or "(No style profile provided — write in a clear, direct, anti-BS tone.)",
+    )
+    prompt = prompt.replace("{production_style_instructions}", production_block)
+    prompt = prompt.replace("{date}", datetime.now().strftime("%Y-%m-%d"))
 
     return prompt
 
@@ -475,85 +508,87 @@ def triage_video(username: str, video_id: str, gemini: GeminiClient) -> dict:
     return {"success": True, "passed": passed, "triage": triage, "error": None}
 
 
-def analyse_video(
-    username: str, video_id: str, gemini: GeminiClient, style_profile: str = None
+def rewrite_video_script(
+    competitor_username: str,
+    video_id: str,
+    gemini: GeminiClient,
+    style_profile: str,
+    own_username: str,
+    production_style: str = "talking_head",
 ) -> dict:
     """
-    Deep analysis + script generation for a single video (Mode 2, Stage 2).
+    Rewrite a competitor video's script in the creator's voice (Mode 2, Stage 2).
 
-    Sends to smart model for full analysis.
-    Saves to /analyses/{video_id}.json.
-    Updates processed.json.
+    This is a TRANSLATION task — preserves the competitor's topic, hook mechanic,
+    beat structure, and CTA pattern, but rewrites every line in the creator's voice
+    using their style profile. Output is markdown, saved under the creator's
+    generated_scripts directory (not the competitor's).
 
     Returns:
-        {"success": bool, "analysis": dict | None, "error": str | None}
+        {"success": bool, "script_path": str | None, "error": str | None}
     """
-    print(f"\nAnalysing {video_id}...")
+    print(f"\nRewriting {video_id}...")
 
-    # Check if already analysed
-    processed = _load_processed(username)
-    if video_id in processed and processed[video_id].get("status") == "analysed":
-        print(f"  Already analysed — skipping")
-        analysis_path = DATA_DIR / username / "analyses" / f"{video_id}.json"
-        if analysis_path.exists():
-            with open(analysis_path, "r", encoding="utf-8") as f:
-                return {"success": True, "analysis": json.load(f), "error": None}
-        return {"success": True, "analysis": None, "error": None}
+    if not own_username:
+        error = "own_username is required to route rewritten scripts to the right folder."
+        _update_processed(competitor_username, video_id, status="failed", mode="competitor_intel", error=error)
+        return {"success": False, "script_path": None, "error": error}
 
-    # Get video stats
-    stats = _get_video_stats(username, video_id)
+    # Check if already rewritten
+    processed = _load_processed(competitor_username)
+    if video_id in processed and processed[video_id].get("status") == "rewritten":
+        existing = processed[video_id].get("script_path")
+        if existing and Path(existing).exists():
+            print(f"  Already rewritten — skipping ({existing})")
+            return {"success": True, "script_path": existing, "error": None}
+
+    # Get stats
+    stats = _get_video_stats(competitor_username, video_id)
     if not stats:
         error = f"Video {video_id} not found in metadata"
-        _update_processed(username, video_id, status="failed", mode="competitor_intel", error=error)
-        return {"success": False, "analysis": None, "error": error}
+        _update_processed(competitor_username, video_id, status="failed", mode="competitor_intel", error=error)
+        return {"success": False, "script_path": None, "error": error}
 
-    # Load transcript (should already exist from triage stage)
-    transcript_path = DATA_DIR / username / "transcripts" / f"{video_id}.txt"
+    # Load transcript (should exist from triage stage)
+    transcript_path = DATA_DIR / competitor_username / "transcripts" / f"{video_id}.txt"
     if not transcript_path.exists():
         error = f"No transcript found for {video_id}. Run triage first."
-        _update_processed(username, video_id, status="failed", mode="competitor_intel", error=error)
-        return {"success": False, "analysis": None, "error": error}
+        _update_processed(competitor_username, video_id, status="failed", mode="competitor_intel", error=error)
+        return {"success": False, "script_path": None, "error": error}
 
     transcript = transcript_path.read_text(encoding="utf-8")
 
     # Build prompt
-    prompt = _build_analysis_prompt(video_id, stats, transcript, style_profile)
+    prompt = _build_rewrite_prompt(
+        video_id, competitor_username, stats, transcript, style_profile, production_style
+    )
 
+    # Call smart model (markdown output)
     try:
-        response = gemini.call_smart(prompt, json_mode=True)
-        analysis = json.loads(response)
-    except json.JSONDecodeError:
-        # Retry once
-        print(f"  Invalid JSON — retrying...")
-        try:
-            response = gemini.call_smart(prompt, json_mode=True)
-            analysis = json.loads(response)
-        except (json.JSONDecodeError, Exception) as e:
-            error = f"Analysis failed (invalid JSON): {str(e)[:200]}"
-            _update_processed(username, video_id, status="failed", mode="competitor_intel", error=error)
-            # Save raw response
-            raw_dir = DATA_DIR / username / "analyses"
-            raw_dir.mkdir(parents=True, exist_ok=True)
-            (raw_dir / f"{video_id}_raw.txt").write_text(response, encoding="utf-8")
-            return {"success": False, "analysis": None, "error": error}
+        response = gemini.call_smart(prompt, json_mode=False)
     except Exception as e:
         error = f"Gemini API error: {str(e)[:200]}"
-        _update_processed(username, video_id, status="failed", mode="competitor_intel", error=error)
-        return {"success": False, "analysis": None, "error": error}
+        _update_processed(competitor_username, video_id, status="failed", mode="competitor_intel", error=error)
+        return {"success": False, "script_path": None, "error": error}
 
-    # Save analysis
-    analyses_dir = DATA_DIR / username / "analyses"
-    analyses_dir.mkdir(parents=True, exist_ok=True)
-    analysis_path = analyses_dir / f"{video_id}.json"
-    with open(analysis_path, "w", encoding="utf-8") as f:
-        json.dump(analysis, f, indent=2, ensure_ascii=False)
+    # Save to the creator's generated_scripts folder
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    scripts_dir = (
+        DATA_DIR / own_username / "generated_scripts"
+        / f"competitor_{competitor_username}" / date_str
+    )
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    script_path = scripts_dir / f"{video_id}.md"
+    script_path.write_text(response, encoding="utf-8")
 
-    _update_processed(username, video_id, status="analysed", mode="competitor_intel")
+    _update_processed(
+        competitor_username, video_id,
+        status="rewritten", mode="competitor_intel",
+        script_path=str(script_path),
+    )
 
-    hook = analysis.get("score_card", {}).get("scores", {}).get("hook_strength", "?")
-    print(f"  Analysed: hook={hook}, script generated")
-
-    return {"success": True, "analysis": analysis, "error": None}
+    print(f"  Rewritten: {script_path}")
+    return {"success": True, "script_path": str(script_path), "error": None}
 
 
 def run_competitor_analysis(
@@ -561,24 +596,29 @@ def run_competitor_analysis(
     video_ids: list[str],
     style_profile_username: str = None,
     gemini: GeminiClient = None,
+    production_style: str = "talking_head",
 ) -> dict:
     """
-    Run Mode 2 competitor intelligence pipeline on selected videos.
+    Run Mode 2 competitor pipeline on selected videos.
 
-    Stage 1: Triage all videos (cheap model)
-    Stage 2: Analyse + generate scripts for videos that pass triage (smart model)
+    Stage 1: Triage (cheap model — pass/fail relevance check)
+    Stage 2: Rewrite each passing video's script in the creator's voice (smart model)
+
+    Note: style_profile_username is both the voice source AND the destination for
+    generated scripts. Rewritten scripts land under the creator's folder, not the
+    competitor's.
 
     Args:
         username: Competitor's TikTok username
         video_ids: List of video IDs to process
-        style_profile_username: Username whose style profile to use (optional)
+        style_profile_username: The creator's username — whose voice to use AND where to save scripts
         gemini: GeminiClient instance
 
     Returns:
         {
             "total": int,
             "triaged_out": int,
-            "analysed": int,
+            "rewritten": int,
             "failed": int,
             "no_transcript": int,
             "results": list[dict]
@@ -599,7 +639,7 @@ def run_competitor_analysis(
 
     results = []
     triaged_out = 0
-    analysed = 0
+    rewritten = 0
     failed = 0
     no_transcript = 0
 
@@ -648,40 +688,43 @@ def run_competitor_analysis(
     print(f"\nTriage complete: {len(passed_ids)} passed, {triaged_out} filtered out, {failed} failed")
 
     if not passed_ids:
-        print("No videos passed triage — nothing to analyse.")
+        print("No videos passed triage — nothing to rewrite.")
         return {
             "total": len(video_ids),
             "triaged_out": triaged_out,
-            "analysed": 0,
+            "rewritten": 0,
             "failed": failed,
             "no_transcript": no_transcript,
             "results": results,
         }
 
-    # ---- STAGE 2: ANALYSE + GENERATE ----
+    # ---- STAGE 2: REWRITE SCRIPTS ----
     print(f"\n{'=' * 60}")
-    print(f"STAGE 2: ANALYSE + GENERATE ({len(passed_ids)} videos)")
+    print(f"STAGE 2: REWRITE SCRIPTS ({len(passed_ids)} videos)")
     print(f"{'=' * 60}")
 
     for i, video_id in enumerate(passed_ids):
-        print(f"\n[Analysis {i + 1}/{len(passed_ids)}] {video_id}")
+        print(f"\n[Rewrite {i + 1}/{len(passed_ids)}] {video_id}")
 
         try:
-            result = analyse_video(username, video_id, gemini, style_profile)
+            result = rewrite_video_script(
+                username, video_id, gemini, style_profile,
+                style_profile_username, production_style,
+            )
 
             if result["success"]:
-                analysed += 1
+                rewritten += 1
                 results.append({
                     "video_id": video_id,
-                    "stage": "analysis",
+                    "stage": "rewrite",
                     "success": True,
-                    "analysis": result["analysis"],
+                    "script_path": result["script_path"],
                 })
             else:
                 failed += 1
                 results.append({
                     "video_id": video_id,
-                    "stage": "analysis",
+                    "stage": "rewrite",
                     "success": False,
                     "error": result.get("error"),
                 })
@@ -694,19 +737,19 @@ def run_competitor_analysis(
                 error=f"Unexpected: {str(e)[:200]}",
             )
             failed += 1
-            results.append({"video_id": video_id, "stage": "analysis", "success": False, "error": str(e)})
+            results.append({"video_id": video_id, "stage": "rewrite", "success": False, "error": str(e)})
 
     summary = {
         "total": len(video_ids),
         "triaged_out": triaged_out,
-        "analysed": analysed,
+        "rewritten": rewritten,
         "failed": failed,
         "no_transcript": no_transcript,
         "results": results,
     }
 
     print(f"\n{'=' * 60}")
-    print(f"Competitor analysis complete: {analysed} analysed, "
+    print(f"Competitor rewrite complete: {rewritten} rewritten, "
           f"{triaged_out} triaged out, {failed} failed out of {len(video_ids)} total")
     print(f"{'=' * 60}")
 

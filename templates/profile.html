@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile — @{{ username }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+<header class="site-header">
+    <div class="logo">TikTok <em>Auditor</em></div>
+    <div class="header-actions">
+        <a href="/channel/{{ username }}">← Dashboard</a>
+    </div>
+</header>
+
+<div class="layout">
+
+    <div class="section-label">Style Profile — @{{ username }}</div>
+
+    <!-- Status -->
+    <div class="card">
+        <div class="card-title"><span class="icon">◎</span> Status</div>
+        {% if has_profile %}
+        <p>
+            Profile exists ·
+            {% if is_locked %}<span class="badge badge-profile">🔒 Locked</span>
+            {% else %}<span class="badge badge-noprofile">⚠ Unlocked — next regeneration will overwrite</span>{% endif %}
+            · Last generated {{ last_generated }}
+            · {{ score_count }} scorecard{{ 's' if score_count != 1 }} available
+        </p>
+        {% else %}
+        <p>
+            No profile yet.
+            {% if score_count > 0 %}Click <strong>Generate</strong> below to create one from your {{ score_count }} scorecard{{ 's' if score_count != 1 }}.
+            {% else %}Score some videos first from the Dashboard, then come back here.{% endif %}
+        </p>
+        {% endif %}
+    </div>
+
+    <!-- Lazy Defaults -->
+    <div class="card">
+        <div class="card-title"><span class="icon">◉</span> Your Lazy Defaults</div>
+        <p class="card-desc">
+            Name your own bad habits — openings, hooks, or tics you know underperform. The AI treats these as anti-patterns when rewriting or generating scripts, even if the scorecards don't flag them. One per line, as short quotes or rules (e.g. <code>Opening with "So I've been thinking..."</code>).
+        </p>
+        <textarea id="lazy-defaults" class="input" rows="8" style="width:100%; font-family: var(--font-mono); font-size:13px;">{{ lazy_defaults }}</textarea>
+        <div class="flex-center gap-8 mt-20">
+            <button class="btn btn-primary btn-sm" onclick="saveLazyDefaults()">Save Lazy Defaults</button>
+            <span id="lazy-status" style="color: var(--text-muted);"></span>
+        </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="card">
+        <div class="card-title"><span class="icon">◆</span> Actions</div>
+        <div class="flex-center gap-8" style="flex-wrap: wrap;">
+            {% if is_locked %}
+            <button class="btn btn-ghost" onclick="unlockProfile()">Unlock Profile</button>
+            {% endif %}
+            <button class="btn btn-primary" id="regen-btn" onclick="regenerateProfile()"
+                {% if is_locked %}disabled title="Unlock first"{% elif score_count == 0 %}disabled title="No scorecards — score videos first"{% endif %}>
+                {% if has_profile %}Regenerate{% else %}Generate{% endif %} from Scorecards
+            </button>
+        </div>
+        <p class="card-desc mt-20" style="font-size:13px;">
+            Regeneration uses the current set of scorecards, your lazy defaults, and the TikTok playbook.
+            Takes 30–60 seconds. The profile is auto-locked after a successful generation.
+        </p>
+    </div>
+
+    <!-- Current profile -->
+    {% if has_profile %}
+    <div class="card">
+        <div class="card-title"><span class="icon">▦</span> Current Profile</div>
+        <div class="report-container" id="profile-content"></div>
+    </div>
+    {% endif %}
+
+</div>
+
+<script>
+    marked.setOptions({ breaks: false, gfm: true, headerIds: false, mangle: false });
+    const renderer = new marked.Renderer();
+    renderer.del = function(text) { return '~' + text + '~'; };
+    marked.setOptions({ renderer });
+
+    {% if has_profile %}
+    const rawProfile = {{ profile_content | tojson }};
+    document.getElementById('profile-content').innerHTML = marked.parse(rawProfile);
+    {% endif %}
+
+    async function saveLazyDefaults() {
+        const content = document.getElementById('lazy-defaults').value;
+        const status = document.getElementById('lazy-status');
+        status.textContent = 'Saving…';
+        try {
+            const res = await fetch('/api/profile/{{ username }}/lazy_defaults', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({content: content})
+            });
+            if (res.ok) {
+                status.textContent = '✓ Saved';
+                setTimeout(() => status.textContent = '', 3000);
+            } else {
+                status.textContent = '✗ Save failed';
+            }
+        } catch (e) {
+            status.textContent = '✗ Network error';
+        }
+    }
+
+    async function unlockProfile() {
+        if (!confirm('Unlock the profile? The next regeneration will overwrite the current one.')) return;
+        const res = await fetch('/api/profile/{{ username }}/unlock', {method: 'POST'});
+        if (res.ok) location.reload();
+    }
+
+    async function regenerateProfile() {
+        const hasProfile = {{ 'true' if has_profile else 'false' }};
+        if (hasProfile && !confirm('Regenerate the profile? This overwrites the current one. Any manual edits will be lost.')) return;
+        const btn = document.getElementById('regen-btn');
+        btn.textContent = 'Generating — 30–60 seconds…';
+        btn.disabled = true;
+        try {
+            const res = await fetch('/api/profile/{{ username }}/regenerate', {method: 'POST'});
+            const data = await res.json();
+            if (res.ok) {
+                location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'unknown'));
+                btn.textContent = '{% if has_profile %}Regenerate{% else %}Generate{% endif %} from Scorecards';
+                btn.disabled = false;
+            }
+        } catch (e) {
+            alert('Network error: ' + e.message);
+            btn.textContent = '{% if has_profile %}Regenerate{% else %}Generate{% endif %} from Scorecards';
+            btn.disabled = false;
+        }
+    }
+</script>
+</body>
+</html>

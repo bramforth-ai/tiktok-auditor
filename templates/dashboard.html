@@ -26,7 +26,7 @@
     {% set rates = videos | map(attribute='engagement_rate') | list %}
     {% set avg_rate = "%.2f" | format(rates | sum / rates | length) if rates | length > 0 else "0.00" %}
     {% set scored_count = videos | selectattr('status', 'equalto', 'scored') | list | length %}
-    {% set analysed_count = videos | selectattr('status', 'equalto', 'analysed') | list | length %}
+    {% set rewritten_count = videos | selectattr('status', 'equalto', 'rewritten') | list | length %}
     {% set failed_count = videos | selectattr('status', 'equalto', 'failed') | list | length %}
     {% set max_er = rates | max if rates | length > 0 else 1 %}
 
@@ -40,7 +40,7 @@
             <div class="stat-label">Videos Scanned</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">{{ scored_count + analysed_count }}</div>
+            <div class="stat-value">{{ scored_count + rewritten_count }}</div>
             <div class="stat-label">Processed</div>
         </div>
         <div class="stat-card accent">
@@ -67,12 +67,15 @@
             {% if has_profile %}Your style profile is ready and will be used for competitor analysis.
             {% else %}Once scored, generate your audit report to create a style profile.{% endif %}
         </div>
+        <a href="/profile/{{ username }}" class="btn btn-ghost btn-sm" style="margin-left:auto;">
+            {% if has_profile %}Manage Profile{% else %}Set Up Profile{% endif %}
+        </a>
     </div>
     {% else %}
     <div class="callout info">
         <span class="callout-icon">◉</span>
         <div>
-            <strong>Competitor Analysis</strong> — Select top performers to analyse. Videos are triaged for relevance, then analysed with recreated scripts.
+            <strong>Competitor Adapter</strong> — Select top performers. Videos are triaged for relevance, then each passing script is rewritten in your voice.
         </div>
     </div>
 
@@ -192,8 +195,8 @@
                         <td>
                             {% if v.status == 'scored' %}
                             <span class="badge badge-scored">✓ scored</span>
-                            {% elif v.status == 'analysed' %}
-                            <span class="badge badge-analysed">◆ analysed</span>
+                            {% elif v.status == 'rewritten' %}
+                            <span class="badge badge-analysed">◆ rewritten</span>
                             {% elif v.status == 'failed' %}
                             <span class="badge badge-failed" title="{{ processed.get(v.video_id, {}).get('error', '') }}">✗ failed</span>
                             {% elif v.status == 'triaged_out' %}
@@ -236,13 +239,17 @@
                     Generate Audit Report
                 </button>
                 {% else %}
+                <select id="production-style" class="input input-sm" style="width:auto;" title="Production style for rewrites">
+                    <option value="talking_head" selected>Talking head (default)</option>
+                    <option value="editorial">Editorial (b-roll, cuts)</option>
+                </select>
                 <button class="btn btn-primary" id="process-btn" disabled
                         onclick="startProcessing('{{ username }}', 'competitor_intel')">
-                    Run Competitor Analysis
+                    Run Competitor Adapter
                 </button>
                 <button class="btn btn-success"
                         onclick="generateReport('{{ username }}', 'competitor_intel')">
-                    Generate Competitor Report
+                    Build Scripts Index
                 </button>
                 {% endif %}
             </div>

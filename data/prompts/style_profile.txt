@@ -1,6 +1,12 @@
-You are a TikTok content strategist analysing a creator's full video library. You have been given all their video score cards and transcripts. Your job is to extract a reusable style profile that captures this creator's distinctive patterns, voice, and approach.
+You are a TikTok content strategist analysing a creator's full video library to extract a **stylistic fingerprint** — a reusable profile that will be consumed by downstream AI tools to (a) rewrite competitor scripts in this creator's voice and (b) generate fresh scripts from current trending topics.
 
-This style profile will be used later to adapt competitor video scripts to match this creator's authentic style. It needs to be specific enough to guide a scriptwriter, not generic advice.
+**CRITICAL PRINCIPLE 1 — STRIP ALL TOPICAL CONTENT.**
+This profile must describe HOW the creator talks and structures content, NEVER WHAT they talk about. Topics come from elsewhere at script-generation time (competitor videos, trend research). If you include topic names, product names, tool names, industry labels, or niche-specific references, the downstream prompts will propagate stale content and trap the creator in their past work. Write the profile as if the creator were about to pivot into a completely different subject area — every observation must still apply.
+
+**CRITICAL PRINCIPLE 2 — SEPARATE PROVEN PATTERNS FROM ANTI-PATTERNS.**
+Not all patterns in this creator's history are worth preserving. Some are proven winners (they correlate with high engagement). Some are lazy defaults or structural flaws (they correlate with poor engagement). You must separate the two and explicitly name both — so downstream tools know what to reproduce AND what to actively avoid. Quote literal examples of each so the downstream LLM can pattern-match against concrete text, not just abstract labels.
+
+---
 
 ## Creator: @{username}
 
@@ -10,40 +16,96 @@ This style profile will be used later to adapt competitor video scripts to match
 - Average engagement rate: {avg_engagement}%
 
 ## Score Cards (JSON array)
+Each card contains engagement metrics and a rubric score. Before writing the profile, rank the cards by **aggregate score** — the sum of `hook_strength + content_structure + pacing + cta_presence + educational_value + entertainment_value + rewatch_potential + save_worthiness + share_worthiness`. Use the top quartile to derive Proven Patterns. Use the bottom quartile to derive Anti-Patterns. If fewer than 8 cards are provided, work with the top and bottom third instead, and flag the resulting patterns as low-confidence at the top of the relevant section.
+
 {score_cards}
 
 ## Sample Transcripts
+Use these to pull literal quoted examples. Every quote must be short (under 25 words) and cited with the source `[video_id]`.
+
 {transcripts}
 
-## Instructions
+## TikTok Playbook (reference — what objectively works on the platform)
+Cross-reference the creator's patterns against this playbook. Use it as an external quality check:
+- If the creator does something the playbook explicitly endorses AND their top-quartile scorecards confirm it works for them, that is a **high-confidence proven pattern**.
+- If the creator does something the playbook explicitly warns against, that is an **anti-pattern regardless of their historical scores** — include it in Anti-Patterns even if it doesn't appear in the bottom quartile.
 
-Analyse the score cards and transcripts to identify patterns. Write a style profile in markdown format with these exact sections:
+{playbook}
 
-### Voice & Tone
-What does this creator sound like? Formal or casual? Direct or meandering? What filler words or verbal tics do they use? What's their energy level?
+## Creator's Self-Declared Lazy Defaults
+The creator has named the following patterns as their own bad habits they want to move away from. Treat these as **authoritative anti-patterns** even if they don't appear in the bottom quartile. If this section is "(none provided)", rely on the scorecard-derived anti-patterns only.
 
-### Vocabulary
-What kind of language do they use? Technical jargon level? Do they name specific tools? Buzzword usage? British/American English? Any signature phrases?
+{lazy_defaults}
 
-### Hook Patterns
-Which hook types do they use most? Which hook types correlate with their best-performing videos? Which do they rarely use but should try?
+---
 
-### Content Structure
-What frameworks do they naturally gravitate toward? How long are their videos typically? Do they use series? How do they end videos?
+## Required Output Structure
 
-### Pacing
-What's their average WPM? Do they vary speed? Do they let demos breathe or rush through? Do they use pauses effectively?
+Write the profile in clean markdown. Begin with the header `# Style Profile: @{username}`. Use exactly the three sections below — no other sections, no introduction, no conclusion.
 
-### What Works Best
-Based on the engagement data and scores, what content characteristics consistently perform well for this creator? Be specific — cite score patterns and engagement correlations.
+### 1. Voice & Personality
 
-### What Underperforms
-What patterns appear in their lowest-scoring and lowest-engagement videos? What should they avoid or fix?
+Extract **unconditionally from all transcripts** — this section is performance-independent. It captures who the creator IS, not what works for them.
 
-## Output
+Cover:
+- **Tone**: energy level, register (conversational / formal / hushed / raw), emotional range
+- **Cadence**: typical WPM, variance pattern (when do they speed up / slow down), pause style
+- **Vocabulary register**: jargon level, sentence length, sentence complexity
+- **Colloquialisms & regionalisms**: British / American / other; specific idioms they actually use
+- **Signature phrases**: short recurring phrases that are stylistic (e.g. "I'm giving it all away for free" is stylistic; "Make.com is rubbish" is topical and MUST be excluded)
+- **Self-presentation**: how they frame themselves relative to the audience (peer / authority / underdog / insider / tired-parent-building-in-trenches / etc.)
+- **Humour style**: self-deprecating / dry / sarcastic / deadpan / absent
 
-Write the style profile as clean markdown. Start with a header: `# Style Profile: @{username}`
+Every claim must be backed by a short quoted example from a transcript, cited as `[video_id]`.
 
-Be specific and evidence-based. Reference actual patterns from the transcripts, not generic advice. If you notice a distinctive speech pattern, quote a short example. If certain topic categories consistently outperform others, name them with data.
+**FORBIDDEN IN THIS SECTION**: naming any tools, products, companies, industries, topic categories, or current events. If you find yourself writing "he talks a lot about X", rewrite it as a structural observation without X.
 
-The profile should be detailed enough that someone who has never seen this creator's content could write a script that sounds like them.
+### 2. Proven Patterns
+
+Derived from the **top quartile** of score cards. A pattern qualifies for inclusion if EITHER (a) it appears in multiple top-quartile videos, OR (b) the playbook explicitly endorses it AND at least one top-quartile video uses it.
+
+Cover at minimum these areas (omit any area where no clear pattern emerges): hook mechanics, opening structure, content-structure framework, pacing patterns, CTA mechanisms, closing patterns.
+
+For each pattern, use this exact format:
+
+```
+**Pattern: `pattern_name`**
+Description: <one sentence, topic-agnostic, mechanical>
+Evidence:
+  - "<quoted line under 25 words>" [video_id] (aggregate: <score>, <dimension>: <dimension_score>)
+  - "<quoted line under 25 words>" [video_id] (aggregate: <score>, <dimension>: <dimension_score>)
+Rule for downstream use: <unambiguous instruction a scriptwriting prompt should follow to reproduce this pattern>
+```
+
+Use `code_style` backticks around pattern names so they're machine-parseable.
+
+### 3. Anti-Patterns to Avoid
+
+Derived from the **bottom quartile** of score cards AND the creator's self-declared lazy defaults AND any pattern that violates the playbook. These are structural habits downstream prompts must NEVER reproduce.
+
+For each anti-pattern, use this exact format:
+
+```
+**Anti-pattern: `pattern_name`**
+Examples from the creator's own content:
+  - "<quoted opening or line under 25 words>" [video_id] (aggregate: <score>)
+  - "<quoted opening or line under 25 words>" [video_id] (aggregate: <score>)
+Why it fails: <one or two sentences — cognitive, algorithmic, or audience-behaviour mechanism>
+Explicit rule: <unambiguous negative instruction for downstream prompts>
+```
+
+Include self-declared lazy defaults even if no bottom-quartile evidence supports them — cite the source as `[self-declared]` instead of a video_id.
+
+---
+
+## Output Rules
+
+- Output markdown only. No code fences wrapping the whole response.
+- Every quoted line must be short (under 25 words) and attributed with `[video_id]` or `[self-declared]`.
+- Pattern names must be lowercase snake_case inside backticks (e.g. `contrarian_statement_hook`).
+- Do NOT include topic names, product names, tool names, company names, industry terms, or current events anywhere in the output.
+- Do NOT include sections other than the three above — no "What Works Best", no "Summary", no introduction.
+- Do NOT invent patterns that aren't evidenced in the provided data.
+- If the scorecard set is too small for reliable quartiles (fewer than 8 cards), flag this at the top of both Proven Patterns and Anti-Patterns, and work with whatever top/bottom third of the data you have.
+
+Now produce the style profile for @{username}.
