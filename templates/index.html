@@ -159,6 +159,42 @@
         {% endif %}
     </div>
 
+
+    <!-- ============================================================ -->
+    <!-- TREND BATCHES -->
+    <!-- ============================================================ -->
+    {% if own_username %}
+    <div class="section-label">Trend Generator</div>
+    <div class="card">
+        <div class="card-title"><span class="icon">◆</span> Trend Batches</div>
+        <p class="card-desc">
+            Research-grounded script batches in your voice. Each batch bundles a research brief and N scripts.
+        </p>
+        {% if trend_batches %}
+        <div class="competitor-grid">
+            {% for b in trend_batches %}
+            <a href="/trend/{{ own_username }}/{{ b.date }}" class="competitor-item">
+                <div>
+                    <div class="c-name">{{ b.date }}</div>
+                    <div class="c-meta">
+                        {{ b.script_count }} script{{ 's' if b.script_count != 1 }}
+                        {% if b.has_research %} · research saved{% endif %}
+                        · last updated {{ b.last_modified }}
+                    </div>
+                </div>
+                <span class="c-arrow">→</span>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color: var(--text-muted);">No trend batches yet.</p>
+        {% endif %}
+        <div class="flex-center gap-8 mt-20">
+            <a href="/trend/{{ own_username }}" class="btn btn-primary btn-sm">Open Trend Generator</a>
+        </div>
+    </div>
+    {% endif %}
+
 </div>
 
 <script src="/static/app.js"></script>

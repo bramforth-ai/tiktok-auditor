@@ -22,9 +22,11 @@ from services.tiktok import scan_channel, load_metadata, DATA_DIR
 from services.gemini_client import GeminiClient
 from services.analyser import run_self_audit, run_competitor_analysis
 from services.reporter import (
-    generate_full_audit,
+    generate_audit_report,
     generate_competitor_index,
     load_style_profile,
+    get_profile_stats,
+    get_latest_audit_stats,
 )
 from services.trend_generator import (
     run_trend_research,
@@ -518,9 +520,14 @@ async def index(request: Request):
                     "reports": [],
                 }
 
+    # Trend batches for the own channel — home page doubles as output index.
+    trend_batches = list_trend_batches(own_username) if own_username else []
+
     return templates.TemplateResponse(request, "index.html", {
         "own_channel": own_channel,
         "competitors": competitors,
+        "trend_batches": trend_batches,
+        "own_username": own_username,
     })
 
 
@@ -538,16 +545,32 @@ async def dashboard(request: Request, username: str):
         with open(processed_path, encoding="utf-8") as f:
             processed = json.load(f)
 
-    # Enrich videos with processing status
+    # Enrich videos with processing status + count them for the pipeline status bar.
+    status_counts = {
+        "unprocessed": 0, "scored": 0, "rewritten": 0,
+        "failed": 0, "triaged_out": 0, "no_transcript": 0,
+    }
     for video in metadata["videos"]:
         vid = video["video_id"]
         if vid in processed:
             video["status"] = processed[vid].get("status", "unprocessed")
         else:
             video["status"] = "unprocessed"
+        status_counts[video["status"]] = status_counts.get(video["status"], 0) + 1
 
-    # Check for style profile
-    has_profile = (DATA_DIR / username / "style_profile.md").exists()
+    # Determine if this is the user's own channel
+    own_username = _get_own_username()
+    is_own_channel = (username == own_username)
+
+    # Pipeline status — only meaningful for the creator's own channel
+    profile_stats = get_profile_stats(username) if is_own_channel else None
+    audit_stats = get_latest_audit_stats(username) if is_own_channel else None
+
+    # For consumer pages (competitor dashboards), surface which creator-profile
+    # is being used — the inline banner template expects this.
+    creator_profile_stats = None
+    if not is_own_channel and own_username:
+        creator_profile_stats = get_profile_stats(own_username)
 
     # List available reports
     reports = []
@@ -568,9 +591,7 @@ async def dashboard(request: Request, username: str):
             if channel_dir.is_dir() and (channel_dir / "style_profile.md").exists():
                 style_profiles.append(channel_dir.name)
 
-    # Determine if this is the user's own channel
-    own_username = _get_own_username()
-    is_own_channel = (username == own_username)
+    has_profile = (DATA_DIR / username / "style_profile.md").exists()
 
     return templates.TemplateResponse(request, "dashboard.html", {
         "username": username,
@@ -582,6 +603,10 @@ async def dashboard(request: Request, username: str):
         "style_profiles": style_profiles,
         "is_own_channel": is_own_channel,
         "own_username": own_username,
+        "status_counts": status_counts,
+        "profile_stats": profile_stats,
+        "audit_stats": audit_stats,
+        "creator_profile_stats": creator_profile_stats,
     })
 
 
@@ -615,10 +640,12 @@ async def trend_page(request: Request, own_username: str):
     """Trend generator home: form + list of past batches."""
     batches = list_trend_batches(own_username)
     has_profile = (DATA_DIR / own_username / "style_profile.md").exists()
+    profile_stats = get_profile_stats(own_username)
     return templates.TemplateResponse(request, "trend.html", {
         "username": own_username,
         "batches": batches,
         "has_profile": has_profile,
+        "profile_stats": profile_stats,
     })
 
 
@@ -1049,12 +1076,19 @@ async def api_generate_report(request: Request):
 
     try:
         if mode == "self_audit":
+            # Audit report no longer silently builds the profile. Require it.
+            profile_path = DATA_DIR / username / "style_profile.md"
+            if not profile_path.exists():
+                return JSONResponse(
+                    {"error": "No style profile yet. Build your profile on the Profile page before building an audit report."},
+                    status_code=400,
+                )
             gemini = GeminiClient()
-            result = generate_full_audit(username, gemini)
+            report_path = generate_audit_report(username, gemini)
             return {
                 "success": True,
-                "report_path": result["audit_report_path"],
-                "filename": Path(result["audit_report_path"]).name,
+                "report_path": report_path,
+                "filename": Path(report_path).name,
             }
         else:
             # Competitor mode: no LLM call — index the already-generated scripts.

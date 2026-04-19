@@ -31,6 +31,23 @@
             <a href="/profile/{{ username }}">Set one up →</a>
         </div>
     </div>
+    {% else %}
+    <div style="padding: 10px 16px; margin-bottom: 18px; border: 1px solid var(--border); border-radius: 6px; display: flex; align-items: center; gap: 12px; background: var(--bg-raised); font-size: 13px;">
+        <span>◉</span>
+        <div style="flex:1;">
+            Using profile from <strong>@{{ username }}</strong>
+            {% if profile_stats and profile_stats.built_from_count %}
+            — built from {{ profile_stats.built_from_count }} scorecards
+            {% endif %}
+            {% if profile_stats and profile_stats.built_at %}
+            on {{ profile_stats.built_at[:16].replace('T', ' ') }}
+            {% endif %}
+            {% if profile_stats and profile_stats.drift > 0 %}
+            · <span style="color:#c4892b;">{{ profile_stats.drift }} new scorecard{{ 's' if profile_stats.drift != 1 }} since — consider rebuilding</span>
+            {% endif %}.
+        </div>
+        <a href="/profile/{{ username }}" class="btn btn-ghost btn-sm">Manage</a>
+    </div>
     {% endif %}
 
     <!-- Generator form -->

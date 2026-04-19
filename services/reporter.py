@@ -196,11 +196,22 @@ def generate_style_profile(username: str, gemini: GeminiClient = None) -> str:
     # Save profile
     profile_path.write_text(response, encoding="utf-8")
 
-    # Auto-lock: prevent future "Generate Report" clicks from overwriting this
-    # profile without explicit user intent (unlock via UI or delete the sentinel).
+    # Sidecar metadata so the dashboard can show drift ("profile built from
+    # N scorecards" vs current scorecard count).
+    meta_path = profile_path.parent / "style_profile.meta.json"
+    meta_path.write_text(
+        json.dumps({
+            "built_at": datetime.now().isoformat(timespec="seconds"),
+            "built_from_count": len(score_cards),
+        }, indent=2),
+        encoding="utf-8",
+    )
+
+    # Auto-lock: prevent future regenerations from overwriting this profile
+    # without explicit user intent (Unlock action on the Profile page).
     lock_path.write_text(
         "Presence of this file tells services/reporter.py::generate_style_profile() "
-        "to skip auto-regeneration.\n"
+        "to skip regeneration.\n"
         "Delete this file (or use the Profile screen's Unlock action) to allow "
         "regeneration from current score cards.\n",
         encoding="utf-8",
@@ -208,6 +219,86 @@ def generate_style_profile(username: str, gemini: GeminiClient = None) -> str:
 
     print(f"  Style profile saved to {profile_path} (locked)")
     return str(profile_path)
+
+
+def get_profile_stats(username: str) -> dict:
+    """
+    Return a status summary of the profile for a channel. Shape:
+      {
+        "exists": bool,
+        "is_locked": bool,
+        "built_at": str | None,              # ISO date-time if known
+        "built_from_count": int | None,      # scorecards used at build time
+        "current_score_count": int,          # scorecards currently on disk
+        "drift": int,                        # current - built_from (>=0)
+      }
+    """
+    profile_path = DATA_DIR / username / "style_profile.md"
+    lock_path = DATA_DIR / username / "style_profile.md.locked"
+    meta_path = DATA_DIR / username / "style_profile.meta.json"
+    scores_dir = DATA_DIR / username / "scores"
+
+    current_score_count = 0
+    if scores_dir.exists():
+        current_score_count = len([
+            p for p in scores_dir.glob("*.json")
+            if not p.stem.endswith("_raw")
+        ])
+
+    exists = profile_path.exists()
+    is_locked = lock_path.exists() and exists
+
+    built_at = None
+    built_from_count = None
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            built_at = meta.get("built_at")
+            built_from_count = meta.get("built_from_count")
+        except Exception:
+            pass
+    # Fallback for profiles built before sidecar metadata existed:
+    # use mtime as the build timestamp and leave built_from_count unknown.
+    if exists and built_at is None:
+        built_at = datetime.fromtimestamp(
+            profile_path.stat().st_mtime
+        ).isoformat(timespec="seconds")
+
+    drift = 0
+    if built_from_count is not None:
+        drift = max(0, current_score_count - built_from_count)
+
+    return {
+        "exists": exists,
+        "is_locked": is_locked,
+        "built_at": built_at,
+        "built_from_count": built_from_count,
+        "current_score_count": current_score_count,
+        "drift": drift,
+    }
+
+
+def get_latest_audit_stats(username: str) -> dict:
+    """Return a summary for the most recent audit report (or a not-built stub)."""
+    reports_dir = DATA_DIR / username / "reports"
+    if not reports_dir.exists():
+        return {"exists": False}
+    candidates = sorted(
+        reports_dir.glob("audit_*.md"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return {"exists": False}
+    latest = candidates[0]
+    return {
+        "exists": True,
+        "filename": latest.name,
+        "built_at": datetime.fromtimestamp(
+            latest.stat().st_mtime
+        ).isoformat(timespec="seconds"),
+        "total_count": len(candidates),
+    }
 
 
 def generate_audit_report(username: str, gemini: GeminiClient = None) -> str:
@@ -272,29 +363,19 @@ def generate_audit_report(username: str, gemini: GeminiClient = None) -> str:
 
 
 def generate_full_audit(username: str, gemini: GeminiClient = None) -> dict:
-    """
-    Generate both style profile and audit report in one call.
-    Always regenerates the style profile from ALL current score cards
-    before building the report, ensuring it reflects the latest data.
-
-    Args:
-        username: TikTok username
-        gemini: GeminiClient instance
-
-    Returns:
-        {"style_profile_path": str, "audit_report_path": str}
-    """
+    """DEPRECATED wrapper kept for backwards compatibility. New code should call
+    generate_style_profile and generate_audit_report explicitly. This helper now
+    REQUIRES a style profile to exist up front (will not silently build one)."""
+    profile_path = DATA_DIR / username / "style_profile.md"
+    if not profile_path.exists():
+        raise ValueError(
+            f"No style profile for @{username}. Build the profile on the Profile page before generating an audit report."
+        )
     if gemini is None:
         gemini = GeminiClient()
-
-    # Always regenerate style profile from current scores
-    profile_path = generate_style_profile(username, gemini)
-
-    # Then generate audit report using fresh profile
     report_path = generate_audit_report(username, gemini)
-
     return {
-        "style_profile_path": profile_path,
+        "style_profile_path": str(profile_path),
         "audit_report_path": report_path,
     }
 

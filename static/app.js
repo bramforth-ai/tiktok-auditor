@@ -512,6 +512,7 @@ function sortTable(column) {
 
 let currentPage = 1;
 let pageSize = 100;
+let unprocessedOnly = false;  // row-visibility filter toggle
 
 function getAllRows() {
     const table = document.getElementById('video-table');
@@ -519,12 +520,23 @@ function getAllRows() {
     return Array.from(table.querySelectorAll('tbody tr'));
 }
 
+function getVisibleRows() {
+    // Apply the unprocessed-only filter at the row level (before pagination).
+    const all = getAllRows();
+    if (!unprocessedOnly) return all;
+    return all.filter(r => {
+        const s = r.dataset.status;
+        return !s || s === 'unprocessed' || s === 'failed';
+    });
+}
+
 function getTotalPages() {
-    return Math.max(1, Math.ceil(getAllRows().length / pageSize));
+    return Math.max(1, Math.ceil(getVisibleRows().length / pageSize));
 }
 
 function renderPage() {
-    const rows = getAllRows();
+    const all = getAllRows();
+    const visible = getVisibleRows();
     const totalPages = getTotalPages();
 
     // Clamp current page
@@ -534,13 +546,25 @@ function renderPage() {
     const start = (currentPage - 1) * pageSize;
     const end = start + pageSize;
 
-    rows.forEach((row, i) => {
+    // First: hide all rows filtered out by the unprocessed-only toggle.
+    const visibleSet = new Set(visible);
+    all.forEach(row => {
+        if (!visibleSet.has(row)) row.style.display = 'none';
+    });
+
+    // Then paginate the visible set.
+    visible.forEach((row, i) => {
         row.style.display = (i >= start && i < end) ? '' : 'none';
     });
 
     // Update controls
     const info = document.getElementById('page-info');
-    if (info) info.textContent = `Page ${currentPage} of ${totalPages} · ${rows.length} videos`;
+    if (info) {
+        const suffix = unprocessedOnly
+            ? ` · ${visible.length} of ${all.length} (filtered)`
+            : ` · ${all.length} videos`;
+        info.textContent = `Page ${currentPage} of ${totalPages}${suffix}`;
+    }
 
     const prevBtn = document.getElementById('page-prev');
     const nextBtn = document.getElementById('page-next');
@@ -550,6 +574,14 @@ function renderPage() {
     // Hide pagination entirely if only 1 page
     const pag = document.getElementById('pagination');
     if (pag) pag.style.display = totalPages <= 1 ? 'none' : 'flex';
+}
+
+function toggleUnprocessedOnly() {
+    unprocessedOnly = !unprocessedOnly;
+    currentPage = 1;
+    const btn = document.getElementById('filter-toggle-btn');
+    if (btn) btn.textContent = unprocessedOnly ? 'Show all videos' : 'Show unprocessed only';
+    renderPage();
 }
 
 function goToPage(page) {
