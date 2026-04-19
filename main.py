@@ -18,7 +18,13 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import FileResponse, JSONResponse
 import uvicorn
 
-from services.tiktok import scan_channel, load_metadata, DATA_DIR
+from services.tiktok import (
+    scan_channel,
+    load_metadata,
+    refetch_video_metadata,
+    rebuild_metadata_from_disk,
+    DATA_DIR,
+)
 from services.gemini_client import GeminiClient
 from services.analyser import run_self_audit, run_competitor_analysis
 from services.reporter import (
@@ -27,6 +33,8 @@ from services.reporter import (
     load_style_profile,
     get_profile_stats,
     get_latest_audit_stats,
+    list_orphan_scorecards,
+    delete_orphan_scorecards,
 )
 from services.trend_generator import (
     run_trend_research,
@@ -275,10 +283,24 @@ def _reset_processing_state():
 
 
 def _run_self_audit_bg(username: str, video_ids: list[str]):
-    """Run self-audit scoring in background thread."""
+    """Run self-audit scoring in background thread.
+
+    Idempotency guard: if a scorecard already exists for a video_id, we skip it
+    and emit an 'already_scored' result rather than hitting the LLM again.
+    UI shortcuts already avoid re-selecting scored rows, but this is a belt-and-
+    braces safety net for manual clicks or mis-ticks."""
     try:
         gemini = GeminiClient()
         processing_state["stage"] = "scoring"
+
+        scores_dir = DATA_DIR / username / "scores"
+        processed_path = DATA_DIR / username / "processed.json"
+        already_processed = {}
+        if processed_path.exists():
+            try:
+                already_processed = json.loads(processed_path.read_text(encoding="utf-8"))
+            except Exception:
+                already_processed = {}
 
         for i, video_id in enumerate(video_ids):
             if processing_state["cancel_requested"]:
@@ -286,6 +308,20 @@ def _run_self_audit_bg(username: str, video_ids: list[str]):
 
             processing_state["current_video"] = video_id
             processing_state["current_index"] = i + 1
+
+            # Skip if already scored — guard against re-processing & LLM waste.
+            existing_scorecard = scores_dir / f"{video_id}.json"
+            prev_status = already_processed.get(video_id, {}).get("status")
+            if existing_scorecard.exists() and prev_status == "scored":
+                processing_state["completed"] += 1
+                processing_state["scored"] += 1  # counted as scored for progress
+                processing_state["results"].append({
+                    "video_id": video_id,
+                    "status": "already_scored",
+                })
+                if len(processing_state["results"]) > 20:
+                    processing_state["results"] = processing_state["results"][-20:]
+                continue
 
             from services.analyser import score_video
             try:
@@ -619,6 +655,10 @@ async def view_report(request: Request, username: str, filename: str):
 
     content = report_path.read_text(encoding="utf-8")
 
+    # Audit reports are expensive to regenerate (1 big LLM call over every
+    # scorecard), so require the user to type the filename before deleting.
+    is_audit = filename.startswith("audit_")
+
     return templates.TemplateResponse(request, "report.html", {
         "username": username,
         "filename": filename,
@@ -627,6 +667,8 @@ async def view_report(request: Request, username: str, filename: str):
         "delete_url": f"/api/report/{username}/{filename}/delete",
         "delete_redirect": f"/channel/{username}",
         "delete_label": f"Delete report “{filename}”",
+        "require_typed_confirm": is_audit,
+        "typed_confirm_value": filename if is_audit else None,
     })
 
 
@@ -1039,6 +1081,65 @@ async def api_unlock_profile(username: str):
     if lock_path.exists():
         lock_path.unlink()
     return {"success": True}
+
+
+@app.get("/api/profile/{username}/orphans")
+async def api_list_orphans(username: str):
+    """List scorecards whose video_id is no longer in metadata.json."""
+    return {"orphans": list_orphan_scorecards(username)}
+
+
+@app.post("/api/profile/{username}/orphans/refetch")
+async def api_refetch_orphans(username: str, request: Request):
+    """Try to recover orphan scorecards by re-fetching their .info.json via
+    yt-dlp. Any video that still exists publicly will come back with fresh
+    metadata; the rest are confirmed dead."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    video_ids = body.get("video_ids") or []
+    if not isinstance(video_ids, list):
+        return JSONResponse({"error": "video_ids must be a list"}, status_code=400)
+    # Safety cap: yt-dlp on 200+ URLs gets slow.
+    video_ids = [str(v) for v in video_ids[:200]]
+
+    # After refetch, rebuild metadata.json so the newly-rescued videos start
+    # appearing in the dashboard. We do a zero-yt-dlp metadata rebuild by
+    # re-running scan_channel with a narrow playlist-end — but the easier path
+    # is to re-glob the videos/ dir after refetch and rewrite metadata.json
+    # directly. For simplicity here we just call scan_channel with max_videos=1
+    # — that's a no-op for the channel crawl but triggers the metadata rebuild
+    # at the end. Safer long-term: extract the rebuild into a dedicated helper.
+    result = refetch_video_metadata(username, video_ids)
+
+    # Rebuild metadata.json from whatever's now on disk (no network call).
+    try:
+        rebuild_metadata_from_disk(username)
+    except Exception as e:
+        print(f"[ORPHAN REFETCH] metadata rebuild failed: {e}")
+
+    return result
+
+
+@app.post("/api/profile/{username}/orphans/delete")
+async def api_delete_orphans(username: str, request: Request):
+    """Delete scorecards for specified orphan video_ids. Refuses if a given
+    video_id is still present in metadata (safety). Requires a typed 'DELETE'
+    confirmation in the body to prevent accidents."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if (body.get("confirm") or "").strip() != "DELETE":
+        return JSONResponse(
+            {"error": "Type DELETE to confirm orphan cleanup."}, status_code=400
+        )
+    video_ids = body.get("video_ids") or []
+    if not isinstance(video_ids, list):
+        return JSONResponse({"error": "video_ids must be a list"}, status_code=400)
+    deleted = delete_orphan_scorecards(username, [str(v) for v in video_ids])
+    return {"success": True, "deleted": deleted}
 
 
 @app.post("/api/profile/{username}/regenerate")

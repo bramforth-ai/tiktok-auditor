@@ -707,6 +707,9 @@ function renderProcessingUI(data) {
             if (r.status === 'scored' || r.status === 'rewritten') {
                 icon = '✓'; iconClass = 'success';
                 statusText = r.status;
+            } else if (r.status === 'already_scored') {
+                icon = '↺'; iconClass = 'skip';
+                statusText = 'already scored — skipped';
             } else if (r.status === 'passed_triage') {
                 icon = '→'; iconClass = 'pass';
                 statusText = 'passed triage';

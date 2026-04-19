@@ -81,6 +81,24 @@
     </div>
     {% endif %}
 
+    <!-- Orphan scorecard cleanup -->
+    <div class="card">
+        <div class="card-title"><span class="icon">⊗</span> Orphan scorecards</div>
+        <p class="card-desc">
+            Scorecards on disk whose video_id isn't in your current <code>metadata.json</code>.
+            Usually: videos you've removed from TikTok, or that fell off an older date-filtered scan.
+            They still influence profile generation, so you may want to rescue or remove them.
+        </p>
+        <div id="orphan-summary" style="margin-bottom:12px; color: var(--text-muted);">Loading…</div>
+        <div class="flex-center gap-8" style="flex-wrap:wrap;">
+            <button class="btn btn-ghost btn-sm" onclick="loadOrphans()">Refresh list</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleOrphanList()" id="orphan-toggle-btn" style="display:none;">Show details</button>
+            <button class="btn btn-ghost btn-sm" onclick="refetchOrphans()" id="orphan-refetch-btn" style="display:none;">Try to rescue (refetch from TikTok)</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteOrphans()" id="orphan-delete-btn" style="display:none;">Delete all orphan scorecards</button>
+        </div>
+        <div id="orphan-list" style="display:none; margin-top:14px; max-height:300px; overflow-y:auto; border:1px solid var(--border); border-radius:6px; padding:10px; font-family: var(--font-mono); font-size:12px;"></div>
+    </div>
+
 </div>
 
 <script>
@@ -120,6 +138,134 @@
         const res = await fetch('/api/profile/{{ username }}/unlock', {method: 'POST'});
         if (res.ok) location.reload();
     }
+
+    // ============================================================
+    // Orphan scorecards
+    // ============================================================
+    const USERNAME = {{ username | tojson }};
+    let _orphanCache = null;
+
+    async function loadOrphans() {
+        const summary = document.getElementById('orphan-summary');
+        summary.textContent = 'Loading…';
+        try {
+            const res = await fetch(`/api/profile/${USERNAME}/orphans`);
+            const data = await res.json();
+            _orphanCache = data.orphans || [];
+            renderOrphanSummary();
+        } catch (e) {
+            summary.textContent = '✗ Failed to load: ' + e.message;
+        }
+    }
+
+    function renderOrphanSummary() {
+        const summary = document.getElementById('orphan-summary');
+        const toggleBtn = document.getElementById('orphan-toggle-btn');
+        const refetchBtn = document.getElementById('orphan-refetch-btn');
+        const deleteBtn = document.getElementById('orphan-delete-btn');
+        const list = document.getElementById('orphan-list');
+
+        const n = _orphanCache.length;
+        if (n === 0) {
+            summary.innerHTML = '<strong>✓ No orphans.</strong> Every scorecard on disk matches a video in your current metadata.';
+            toggleBtn.style.display = 'none';
+            refetchBtn.style.display = 'none';
+            deleteBtn.style.display = 'none';
+            list.style.display = 'none';
+            return;
+        }
+        summary.innerHTML = `<strong>${n} orphan scorecard${n === 1 ? '' : 's'}</strong> detected.`;
+        toggleBtn.style.display = '';
+        refetchBtn.style.display = '';
+        deleteBtn.style.display = '';
+
+        list.innerHTML = _orphanCache.map(o =>
+            `<div style="padding:4px 0; border-bottom:1px solid var(--border);">
+                <strong>${o.video_id}</strong>
+                ${o.title ? ` — ${escapeHTML(o.title)}` : ''}
+                <span style="color: var(--text-muted);"> · ${o.age_days}d old</span>
+            </div>`
+        ).join('');
+    }
+
+    function escapeHTML(s) {
+        return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function toggleOrphanList() {
+        const list = document.getElementById('orphan-list');
+        const btn = document.getElementById('orphan-toggle-btn');
+        if (list.style.display === 'none') {
+            list.style.display = '';
+            btn.textContent = 'Hide details';
+        } else {
+            list.style.display = 'none';
+            btn.textContent = 'Show details';
+        }
+    }
+
+    async function refetchOrphans() {
+        if (!_orphanCache || _orphanCache.length === 0) return;
+        const ids = _orphanCache.map(o => o.video_id);
+        const msg = `Attempt to re-fetch ${ids.length} orphan video${ids.length === 1 ? '' : 's'} from TikTok?\n\nAny that still exist publicly will be recovered and appear in your dashboard again. Dead ones will be confirmed. This takes roughly 1–2 seconds per video.`;
+        if (!confirm(msg)) return;
+        const btn = document.getElementById('orphan-refetch-btn');
+        btn.disabled = true; btn.textContent = 'Refetching…';
+        try {
+            const res = await fetch(`/api/profile/${USERNAME}/orphans/refetch`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ video_ids: ids }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                alert(`Recovered: ${data.refetched.length}\nConfirmed dead: ${data.dead.length}`);
+                await loadOrphans();
+            } else {
+                alert('Refetch failed: ' + (data.error || res.status));
+            }
+        } catch (e) {
+            alert('Network error: ' + e.message);
+        } finally {
+            btn.disabled = false; btn.textContent = 'Try to rescue (refetch from TikTok)';
+        }
+    }
+
+    async function deleteOrphans() {
+        if (!_orphanCache || _orphanCache.length === 0) return;
+        const n = _orphanCache.length;
+        const typed = prompt(
+            `Delete ${n} orphan scorecard${n === 1 ? '' : 's'} permanently?\n\n` +
+            `This cannot be undone. Rescanning won't bring the scorecards back — you'd need to rescore the videos (if the videos still exist).\n\n` +
+            `Type DELETE to confirm.`
+        );
+        if (typed !== 'DELETE') {
+            if (typed !== null) alert('Did not type DELETE — cancelled.');
+            return;
+        }
+        try {
+            const res = await fetch(`/api/profile/${USERNAME}/orphans/delete`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    confirm: 'DELETE',
+                    video_ids: _orphanCache.map(o => o.video_id),
+                }),
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                alert(`Deleted ${data.deleted} orphan scorecard${data.deleted === 1 ? '' : 's'}.`);
+                await loadOrphans();
+            } else {
+                alert('Delete failed: ' + (data.error || res.status));
+            }
+        } catch (e) {
+            alert('Network error: ' + e.message);
+        }
+    }
+
+    // Auto-load orphans on page entry
+    loadOrphans();
 
     async function regenerateProfile() {
         const hasProfile = {{ 'true' if has_profile else 'false' }};

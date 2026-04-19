@@ -18,7 +18,11 @@
         <a href="{{ back_url or ('/channel/' ~ username) }}">← Back</a>
         <a href="{{ download_url or ('/api/report/' ~ username ~ '/' ~ filename ~ '/download') }}" class="btn btn-ghost btn-sm">Download .md</a>
         {% if delete_url %}
-        <button class="btn btn-danger btn-sm" onclick="deleteCurrent()">Delete</button>
+        {# Visual separation + typed-confirm indicator so this isn't mis-clicked for Download. #}
+        <span style="display:inline-block; width:32px;"></span>
+        <button class="btn btn-danger btn-sm" onclick="deleteCurrent()" style="opacity: 0.75;">
+            {% if require_typed_confirm %}Delete…{% else %}Delete{% endif %}
+        </button>
         {% endif %}
     </div>
 </header>
@@ -52,7 +56,22 @@
     {% if delete_url %}
     async function deleteCurrent() {
         const label = {{ (delete_label or 'Delete this file') | tojson }};
-        if (!confirm(label + '?\n\nThis cannot be undone.')) return;
+        const typedExpected = {{ (typed_confirm_value or '') | tojson }};
+        if (typedExpected) {
+            // Typed-confirm mode — require the user to type the filename.
+            const typed = prompt(
+                label + '\n\n' +
+                'This file is expensive to regenerate. Type the filename exactly to confirm deletion:\n\n' +
+                typedExpected
+            );
+            if (typed === null) return;
+            if (typed.trim() !== typedExpected) {
+                alert('Filename mismatch — deletion cancelled.');
+                return;
+            }
+        } else {
+            if (!confirm(label + '?\n\nThis cannot be undone.')) return;
+        }
         try {
             const res = await fetch({{ delete_url | tojson }}, { method: 'POST' });
             const data = await res.json().catch(() => ({}));

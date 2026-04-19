@@ -339,6 +339,88 @@ def download_videos(username: str, video_ids: list[str]) -> list[dict]:
     return results
 
 
+def rebuild_metadata_from_disk(username: str) -> dict:
+    """Re-glob videos/*.info.json and rewrite metadata.json. No network call.
+    Useful after operations that add or remove .info.json files on disk
+    (refetches, manual cleanup, etc.)."""
+    channel_dir = DATA_DIR / username
+    videos_dir = channel_dir / "videos"
+    if not videos_dir.exists():
+        return {"username": username, "total_videos": 0, "videos": []}
+
+    videos = []
+    for info_file in videos_dir.glob("*.info.json"):
+        try:
+            video = _parse_info_json(info_file)
+            if video and video["video_id"]:
+                videos.append(video)
+        except Exception as e:
+            print(f"  Error parsing {info_file.name}: {e}")
+
+    videos.sort(key=lambda v: v["engagement_rate"], reverse=True)
+
+    # Preserve existing scan-timestamp metadata if present; just refresh totals.
+    metadata_path = channel_dir / "metadata.json"
+    existing = {}
+    if metadata_path.exists():
+        try:
+            existing = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+
+    metadata = {
+        "username": username,
+        "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "date_from": existing.get("date_from"),
+        "date_to": existing.get("date_to"),
+        "total_videos": len(videos),
+        "videos": videos,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return metadata
+
+
+def refetch_video_metadata(username: str, video_ids: list[str]) -> dict:
+    """Try to re-fetch .info.json for specific video_ids via yt-dlp. Used to
+    rescue orphan scorecards whose video might still exist on TikTok.
+
+    Returns: {"refetched": [video_id, ...], "dead": [video_id, ...]}.
+    A video is 'refetched' if a valid .info.json file exists for it on disk
+    after the call. 'dead' means TikTok no longer returns metadata for it."""
+    if not video_ids:
+        return {"refetched": [], "dead": []}
+
+    channel_dir = _get_channel_dir(username)
+    videos_dir = channel_dir / "videos"
+    videos_dir.mkdir(exist_ok=True)
+
+    urls = [f"https://www.tiktok.com/@{username}/video/{vid}" for vid in video_ids]
+
+    cmd = [
+        _find_ytdlp(),
+        "--skip-download",
+        "--write-info-json",
+        "--restrict-filenames",
+        "--ignore-errors",
+        "--no-overwrites",
+        "-o", str(videos_dir / "%(id)s.%(ext)s"),
+    ] + urls
+
+    subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+    refetched = []
+    dead = []
+    for vid in video_ids:
+        if (videos_dir / f"{vid}.info.json").exists():
+            refetched.append(vid)
+        else:
+            dead.append(vid)
+    return {"refetched": refetched, "dead": dead}
+
+
 def load_metadata(username: str) -> dict | None:
     """
     Load existing metadata.json for a channel.

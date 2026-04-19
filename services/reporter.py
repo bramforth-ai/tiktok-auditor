@@ -278,6 +278,77 @@ def get_profile_stats(username: str) -> dict:
     }
 
 
+def list_orphan_scorecards(username: str) -> list[dict]:
+    """Return scorecards whose video_id is NOT in the current metadata.json.
+
+    Each entry: {"video_id": str, "path": str, "age_days": int, "title": str|None}.
+    title may be None if the scorecard doesn't carry one; we don't hunt around
+    for it (by definition there's no .info.json to read)."""
+    scores_dir = DATA_DIR / username / "scores"
+    if not scores_dir.exists():
+        return []
+
+    # Build the set of video_ids that currently exist in metadata.
+    metadata = load_metadata(username) or {"videos": []}
+    current_ids = {v.get("video_id") for v in metadata.get("videos", []) if v.get("video_id")}
+
+    now = datetime.now()
+    orphans = []
+    for score_file in sorted(scores_dir.glob("*.json")):
+        if score_file.stem.endswith("_raw"):
+            continue
+        video_id = score_file.stem
+        if video_id in current_ids:
+            continue
+
+        title = None
+        try:
+            data = json.loads(score_file.read_text(encoding="utf-8"))
+            # Scorecards usually store the transcript/title under a few keys;
+            # be liberal about what we pick up.
+            title = data.get("title") or data.get("video_title") or data.get("hook")
+            if isinstance(title, str):
+                title = title.strip()[:80] or None
+        except Exception:
+            pass
+
+        mtime = score_file.stat().st_mtime
+        age_days = max(0, int((now - datetime.fromtimestamp(mtime)).total_seconds() // 86400))
+
+        orphans.append({
+            "video_id": video_id,
+            "path": str(score_file),
+            "age_days": age_days,
+            "title": title,
+        })
+
+    return orphans
+
+
+def delete_orphan_scorecards(username: str, video_ids: list[str]) -> int:
+    """Delete scorecards for the given video_ids, but ONLY if they really are
+    orphaned (safety check — refuses to delete a scorecard whose video is still
+    in metadata.json). Returns count deleted."""
+    if not video_ids:
+        return 0
+    metadata = load_metadata(username) or {"videos": []}
+    current_ids = {v.get("video_id") for v in metadata.get("videos", []) if v.get("video_id")}
+    scores_dir = DATA_DIR / username / "scores"
+
+    deleted = 0
+    for vid in video_ids:
+        if vid in current_ids:
+            continue  # not orphan — refuse
+        target = scores_dir / f"{vid}.json"
+        raw_target = scores_dir / f"{vid}_raw.txt"
+        if target.exists():
+            target.unlink()
+            deleted += 1
+        if raw_target.exists():
+            raw_target.unlink()
+    return deleted
+
+
 def get_latest_audit_stats(username: str) -> dict:
     """Return a summary for the most recent audit report (or a not-built stub)."""
     reports_dir = DATA_DIR / username / "reports"

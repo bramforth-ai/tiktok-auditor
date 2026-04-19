@@ -66,9 +66,10 @@
             <div class="pipe-step">1 · Scan</div>
             <div class="pipe-title">Videos scanned</div>
             <div class="pipe-value">{{ metadata.total_videos }}</div>
-            <div class="pipe-sub">avg engagement {{ avg_rate }}%</div>
+            <div class="pipe-sub" id="scan-status-sub">avg engagement {{ avg_rate }}%</div>
             <div class="pipe-actions">
-                <button class="btn btn-ghost btn-sm" onclick="document.getElementById('rescan-block').open = true; document.getElementById('rescan-block').scrollIntoView({behavior:'smooth'})">Rescan</button>
+                <button class="btn btn-primary btn-sm" id="check-new-btn" onclick="checkForNewVideos()">Check for new videos</button>
+                <button class="btn btn-ghost btn-sm" onclick="document.getElementById('rescan-block').open = true; document.getElementById('rescan-block').scrollIntoView({behavior:'smooth'})">Advanced rescan</button>
             </div>
         </div>
 
@@ -450,6 +451,58 @@
 
     function buildAuditReport() {
         generateReport('{{ username }}', 'self_audit');
+    }
+
+    async function checkForNewVideos() {
+        const btn = document.getElementById('check-new-btn');
+        const sub = document.getElementById('scan-status-sub');
+        btn.disabled = true;
+        btn.textContent = 'Scanning…';
+        sub.textContent = 'Fetching the 20 most recent videos from TikTok…';
+        try {
+            const resp = await fetch('/api/scan', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    username: '{{ username }}',
+                    max_videos: 20,
+                    is_own: true,
+                }),
+            });
+            const data = await resp.json();
+            if (!data.success) {
+                notify(data.error || 'Scan failed', 'error');
+                btn.disabled = false; btn.textContent = 'Check for new videos';
+                sub.textContent = '';
+                return;
+            }
+            // Poll until finished, then reload so the table picks up new rows.
+            const poll = setInterval(async () => {
+                try {
+                    const r = await fetch('/api/scan/status');
+                    const s = await r.json();
+                    if (s.is_scanning) {
+                        sub.textContent = `Scanning… found ${s.videos_found} so far`;
+                    } else if (s.finished) {
+                        clearInterval(poll);
+                        if (s.error) {
+                            notify('Scan error: ' + s.error, 'error');
+                            btn.disabled = false; btn.textContent = 'Check for new videos';
+                            sub.textContent = '';
+                        } else {
+                            sub.textContent = `✓ Scan complete — found ${s.videos_found} videos. Reloading…`;
+                            setTimeout(() => window.location.reload(), 600);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Scan poll error:', e);
+                }
+            }, 1500);
+        } catch (e) {
+            notify('Error: ' + e.message, 'error');
+            btn.disabled = false; btn.textContent = 'Check for new videos';
+            sub.textContent = '';
+        }
     }
 </script>
 </body>
