@@ -101,3 +101,33 @@ class GeminiClient:
             Response text string
         """
         return self.call(self.smart_model, prompt, json_mode=json_mode)
+
+    def call_smart_with_search(self, prompt: str) -> str:
+        """
+        Send prompt to the smart model with Google Search grounding enabled.
+
+        Used for research calls that need live web data (e.g. trending AI topics).
+        Search grounding is incompatible with JSON response mode — output is prose.
+
+        Returns:
+            Response text (markdown/prose).
+        """
+        config = {"tools": [{"google_search": {}}]}
+        time.sleep(self.delay)
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.smart_model,
+                    contents=[prompt],
+                    config=config,
+                )
+                return response.text
+
+            except Exception as e:
+                if attempt == MAX_RETRIES - 1:
+                    raise
+                delay = BASE_DELAY * (2 ** attempt)
+                print(f"Gemini search error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+                print(f"Retrying in {delay}s...")
+                time.sleep(delay)

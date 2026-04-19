@@ -44,7 +44,9 @@
 
         <div class="flex-center gap-8" style="flex-wrap:wrap;">
             <a href="/channel/{{ own_channel.username }}" class="btn btn-primary">Open Dashboard</a>
+            <a href="/profile/{{ own_channel.username }}" class="btn btn-ghost btn-sm">Profile</a>
             {% if own_channel.has_profile %}
+            <a href="/trend/{{ own_channel.username }}" class="btn btn-ghost btn-sm">Trend Generator</a>
             <button class="btn btn-danger btn-sm" onclick="deleteStyleProfile('{{ own_channel.username }}')">Delete Profile</button>
             {% endif %}
             {% for report in own_channel.reports %}
@@ -136,15 +138,21 @@
             <div class="section-label">Previously Scanned</div>
             <div class="competitor-grid">
                 {% for ch in competitors %}
-                <a href="/channel/{{ ch.username }}" class="competitor-item">
-                    <div>
-                        <div class="c-name">@{{ ch.username }}</div>
-                        <div class="c-meta">{{ ch.total_videos }} videos · {{ ch.scanned_at }}
-                            {% if ch.report_count > 0 %} · {{ ch.report_count }} report{{ 's' if ch.report_count > 1 }}{% endif %}
+                <div class="competitor-item" style="position:relative;">
+                    <a href="/channel/{{ ch.username }}" style="flex:1; display:flex; justify-content:space-between; align-items:center; text-decoration:none; color:inherit;">
+                        <div>
+                            <div class="c-name">@{{ ch.username }}</div>
+                            <div class="c-meta">{{ ch.total_videos }} videos · scanned {{ ch.scanned_at }}
+                                {% if ch.report_count > 0 %} · {{ ch.report_count }} report{{ 's' if ch.report_count > 1 }}{% endif %}
+                            </div>
                         </div>
-                    </div>
-                    <span class="c-arrow">→</span>
-                </a>
+                        <span class="c-arrow">→</span>
+                    </a>
+                    <button class="btn btn-danger btn-sm" style="margin-left:10px;"
+                        onclick="event.stopPropagation(); deleteCompetitor('{{ ch.username }}')">
+                        Delete
+                    </button>
+                </div>
                 {% endfor %}
             </div>
         </div>

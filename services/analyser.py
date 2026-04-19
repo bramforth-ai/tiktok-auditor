@@ -353,37 +353,32 @@ def _build_triage_prompt(video_id: str, stats: dict, transcript: str) -> str:
     return prompt
 
 
-PRODUCTION_STYLE_BLOCKS = {
-    "talking_head": (
-        "**Style: Talking Head (default)**\n\n"
-        "This creator films simple talking-head videos, occasionally with screen "
-        "recordings for software demos or green-screen with a single reference image "
-        "behind them. They do NOT use b-roll, multi-location cuts, stock footage, "
-        "zoom effects, transition effects, music cues, or cutaways to unrelated "
-        "visuals.\n\n"
-        "Stage directions in this rewrite MUST be limited to this small set:\n"
-        "- `[talking head]` — creator speaking straight to camera\n"
-        "- `[screen recording: <what's on screen>]` — for software or UI demos\n"
-        "- `[green screen: <description of image behind them>]` — for news reactions "
-        "or commentary on an external article, tweet, or product page\n"
-        "- `[text overlay: <under 5 words>]` — for emphasis on a key phrase. Use sparingly.\n\n"
-        "FORBIDDEN directions (do not emit any variant of these): `[b-roll]`, "
-        "`[cut to ...]`, `[jump cut]`, `[stock footage]`, `[music]`, `[sound effect]`, "
-        "`[zoom in]`, `[slow motion]`, `[transition]`, `[montage]`, or any direction "
-        "that implies the creator needs to source external footage.\n\n"
-        "Write the script so it can be read straight into camera from a teleprompter "
-        "with minimal production work. If the competitor's original relies on heavy "
-        "editing, translate the visual intent into spoken emphasis and one of the "
-        "allowed stage directions — do not replicate the editorial style."
-    ),
-    "editorial": (
-        "**Style: Editorial**\n\n"
-        "This creator edits with b-roll, cutaways, text overlays, and visual effects. "
-        "Use full stage directions — jump cuts, screen recordings, b-roll, text "
-        "overlays, transitions — wherever they enhance the message. Match the "
-        "competitor's editorial density where it serves the hook and retention."
-    ),
-}
+DUAL_VERSION_BLOCK = (
+    "**Production Style: Talking Head (with optional screen-recording version)**\n\n"
+    "This creator films simple videos — no b-roll, no cutaways, no editorial "
+    "production. They use ONLY these stage direction types:\n"
+    "- `[talking head]` — creator speaking straight to camera\n"
+    "- `[green screen: <image / webpage / article>]` — static image behind them\n"
+    "- `[text overlay: <under 5 words>]` — on-screen text for emphasis (use sparingly)\n"
+    "- `[screen recording: <what's on screen>]` — software / UI demos (Version B only)\n\n"
+    "FORBIDDEN directions (do not emit any variant of these): `[b-roll]`, "
+    "`[cut to ...]`, `[jump cut]`, `[stock footage]`, `[music]`, `[sound effect]`, "
+    "`[zoom in]`, `[slow motion]`, `[transition]`, `[montage]`, or any direction "
+    "that implies external footage the creator would have to source.\n\n"
+    "**You MUST produce TWO versions of the script:**\n\n"
+    "- **Version A — Talking Head Only**: NO `[screen recording: ...]`. Only "
+    "`[talking head]`, `[green screen: ...]`, and `[text overlay: ...]`. The "
+    "creator can film this in a single take with zero prep — teleprompter + phone. "
+    "For how-to topics that normally need a demo, translate the visual into "
+    "spoken explanation plus a green-screen image if useful.\n\n"
+    "- **Version B — With Screen Recording**: May include `[screen recording: ...]` "
+    "segments where they genuinely add value (software UIs, tool walkthroughs, "
+    "live code). Still use `[green screen]` and `[text overlay]` where appropriate. "
+    "Requires some prep (record the screen capture, sync to voice).\n\n"
+    "Both versions must hit the same hook, structural beats, and CTA pattern. "
+    "If Version B would be essentially identical to Version A (no real demo value "
+    "for the topic), say so in the Notes section and keep Version B short."
+)
 
 
 def _build_rewrite_prompt(
@@ -392,14 +387,9 @@ def _build_rewrite_prompt(
     stats: dict,
     transcript: str,
     style_profile: str,
-    production_style: str = "talking_head",
 ) -> str:
     """Build the competitor-script rewrite prompt (translation, not ideation)."""
     template = _load_prompt("competitor_script.txt")
-
-    production_block = PRODUCTION_STYLE_BLOCKS.get(
-        production_style, PRODUCTION_STYLE_BLOCKS["talking_head"]
-    )
 
     prompt = template.replace("{video_id}", video_id)
     prompt = prompt.replace("{competitor_username}", competitor_username)
@@ -417,7 +407,7 @@ def _build_rewrite_prompt(
         style_profile
         or "(No style profile provided — write in a clear, direct, anti-BS tone.)",
     )
-    prompt = prompt.replace("{production_style_instructions}", production_block)
+    prompt = prompt.replace("{production_style_instructions}", DUAL_VERSION_BLOCK)
     prompt = prompt.replace("{date}", datetime.now().strftime("%Y-%m-%d"))
 
     return prompt
@@ -514,7 +504,6 @@ def rewrite_video_script(
     gemini: GeminiClient,
     style_profile: str,
     own_username: str,
-    production_style: str = "talking_head",
 ) -> dict:
     """
     Rewrite a competitor video's script in the creator's voice (Mode 2, Stage 2).
@@ -560,12 +549,13 @@ def rewrite_video_script(
 
     # Build prompt
     prompt = _build_rewrite_prompt(
-        video_id, competitor_username, stats, transcript, style_profile, production_style
+        video_id, competitor_username, stats, transcript, style_profile
     )
 
-    # Call smart model (markdown output)
+    # Call smart model with Google Search grounding so the rewrite can fact-check
+    # transcription errors (wrong names/numbers/dates) against the live web.
     try:
-        response = gemini.call_smart(prompt, json_mode=False)
+        response = gemini.call_smart_with_search(prompt)
     except Exception as e:
         error = f"Gemini API error: {str(e)[:200]}"
         _update_processed(competitor_username, video_id, status="failed", mode="competitor_intel", error=error)
@@ -596,7 +586,6 @@ def run_competitor_analysis(
     video_ids: list[str],
     style_profile_username: str = None,
     gemini: GeminiClient = None,
-    production_style: str = "talking_head",
 ) -> dict:
     """
     Run Mode 2 competitor pipeline on selected videos.
@@ -708,8 +697,7 @@ def run_competitor_analysis(
 
         try:
             result = rewrite_video_script(
-                username, video_id, gemini, style_profile,
-                style_profile_username, production_style,
+                username, video_id, gemini, style_profile, style_profile_username,
             )
 
             if result["success"]:

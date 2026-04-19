@@ -70,6 +70,7 @@
         <a href="/profile/{{ username }}" class="btn btn-ghost btn-sm" style="margin-left:auto;">
             {% if has_profile %}Manage Profile{% else %}Set Up Profile{% endif %}
         </a>
+        <a href="/trend/{{ username }}" class="btn btn-ghost btn-sm">Trend Generator</a>
     </div>
     {% else %}
     <div class="callout info">
@@ -104,13 +105,22 @@
     <!-- ============================================================ -->
     {% if reports %}
     <div class="card" style="padding: 18px 24px;">
-        <div class="flex-between">
-            <div class="card-title" style="margin-bottom:0; font-size:13px;">Reports</div>
-            <div class="reports-row">
-                {% for report in reports %}
-                <a href="/channel/{{ username }}/report/{{ report.filename }}" class="btn btn-ghost btn-sm">{{ report.filename }}</a>
-                {% endfor %}
+        <div class="card-title" style="margin-bottom:10px; font-size:13px;">Reports</div>
+        <div class="reports-row" style="display:flex; flex-direction:column; gap:6px;">
+            {% for report in reports %}
+            <div style="display:flex; align-items:center; gap:8px;">
+                <a href="/channel/{{ username }}/report/{{ report.filename }}" class="btn btn-ghost btn-sm" style="flex:1; text-align:left;">
+                    {{ report.filename }}
+                </a>
+                <span style="color: var(--text-muted); font-size: 12px; font-family: var(--font-mono); white-space:nowrap;">
+                    {{ report.created }}
+                </span>
+                <button class="btn btn-danger btn-sm"
+                    onclick="deleteReport('{{ username }}', '{{ report.filename }}')">
+                    Delete
+                </button>
             </div>
+            {% endfor %}
         </div>
     </div>
     {% endif %}
@@ -239,10 +249,6 @@
                     Generate Audit Report
                 </button>
                 {% else %}
-                <select id="production-style" class="input input-sm" style="width:auto;" title="Production style for rewrites">
-                    <option value="talking_head" selected>Talking head (default)</option>
-                    <option value="editorial">Editorial (b-roll, cuts)</option>
-                </select>
                 <button class="btn btn-primary" id="process-btn" disabled
                         onclick="startProcessing('{{ username }}', 'competitor_intel')">
                     Run Competitor Adapter

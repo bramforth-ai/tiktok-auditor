@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import json
+import shutil
 import threading
 from pathlib import Path
 from datetime import datetime, timezone
@@ -25,6 +26,49 @@ from services.reporter import (
     generate_competitor_index,
     load_style_profile,
 )
+from services.trend_generator import (
+    run_trend_research,
+    generate_trend_scripts,
+    generate_trend_index,
+    list_trend_batches,
+    list_trend_batch_scripts,
+)
+
+
+# ============================================================
+# Path-safety helper for delete endpoints
+# ============================================================
+
+def _safe_channel_path(*parts: str) -> Path:
+    """Resolve a path inside DATA_DIR and reject any traversal."""
+    data_root = DATA_DIR.resolve()
+    target = (DATA_DIR.joinpath(*parts)).resolve()
+    try:
+        target.relative_to(data_root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Invalid path")
+    return target
+
+
+def _reset_processed_entries(username: str, video_ids: list[str]):
+    """Remove video_ids from a channel's processed.json so the dashboard shows them
+    as unprocessed again (and they can be re-rewritten)."""
+    if not video_ids:
+        return
+    processed_path = DATA_DIR / username / "processed.json"
+    if not processed_path.exists():
+        return
+    try:
+        data = json.loads(processed_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    changed = False
+    for vid in video_ids:
+        if vid in data:
+            del data[vid]
+            changed = True
+    if changed:
+        processed_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 app = FastAPI(title="TikTok Auditor", version="1.0.0")
 
@@ -134,6 +178,74 @@ processing_state = {
 processing_lock = threading.Lock()
 
 
+# ============================================================
+# Trend-generation state (separate from per-video processing)
+# ============================================================
+
+trend_state = {
+    "is_running": False,
+    "stage": "",            # research | scripts | index | done
+    "batch_date": None,
+    "research_path": None,
+    "script_paths": [],
+    "error": None,
+    "finished": False,
+}
+trend_lock = threading.Lock()
+
+
+def _reset_trend_state():
+    trend_state.update({
+        "is_running": False,
+        "stage": "",
+        "batch_date": None,
+        "research_path": None,
+        "script_paths": [],
+        "error": None,
+        "finished": False,
+    })
+
+
+def _run_trend_generation_bg(
+    own_username: str,
+    date_window_days: int,
+    topic_focus: str,
+    topic_exclude: str,
+    script_count: int,
+):
+    """Run trend research + script generation in a background thread."""
+    try:
+        gemini = GeminiClient()
+
+        trend_state["stage"] = "research"
+        result = run_trend_research(
+            own_username, date_window_days, topic_focus, topic_exclude, gemini
+        )
+        trend_state["batch_date"] = result["batch_date"]
+        trend_state["research_path"] = result["research_path"]
+
+        trend_state["stage"] = "scripts"
+        script_paths = generate_trend_scripts(
+            own_username,
+            result["batch_date"],
+            result["research_path"],
+            script_count,
+            gemini,
+        )
+        trend_state["script_paths"] = script_paths
+
+        trend_state["stage"] = "index"
+        generate_trend_index(own_username, result["batch_date"])
+
+        trend_state["stage"] = "done"
+
+    except Exception as e:
+        trend_state["error"] = str(e)
+    finally:
+        trend_state["is_running"] = False
+        trend_state["finished"] = True
+
+
 def _reset_processing_state():
     """Reset processing state for a new batch."""
     processing_state.update({
@@ -217,7 +329,6 @@ def _run_competitor_analysis_bg(
     username: str,
     video_ids: list[str],
     style_profile_username: str = None,
-    production_style: str = "talking_head",
 ):
     """Run competitor analysis in background thread."""
     try:
@@ -311,8 +422,7 @@ def _run_competitor_analysis_bg(
 
             try:
                 result = rewrite_video_script(
-                    username, video_id, gemini, style_profile,
-                    style_profile_username, production_style,
+                    username, video_id, gemini, style_profile, style_profile_username,
                 )
                 processing_state["completed"] += 1
 
@@ -444,9 +554,10 @@ async def dashboard(request: Request, username: str):
     reports_dir = DATA_DIR / username / "reports"
     if reports_dir.exists():
         for report_file in sorted(reports_dir.glob("*.md"), reverse=True):
+            mtime = report_file.stat().st_mtime
             reports.append({
                 "filename": report_file.name,
-                "created": report_file.stat().st_mtime,
+                "created": datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M"),
                 "type": "audit" if "audit" in report_file.name else "competitor",
             })
 
@@ -487,7 +598,151 @@ async def view_report(request: Request, username: str, filename: str):
         "username": username,
         "filename": filename,
         "content": content,
+        "back_url": f"/channel/{username}",
+        "delete_url": f"/api/report/{username}/{filename}/delete",
+        "delete_redirect": f"/channel/{username}",
+        "delete_label": f"Delete report “{filename}”",
     })
+
+
+# ============================================================
+# Trend Script Generator
+# ============================================================
+
+
+@app.get("/trend/{own_username}")
+async def trend_page(request: Request, own_username: str):
+    """Trend generator home: form + list of past batches."""
+    batches = list_trend_batches(own_username)
+    has_profile = (DATA_DIR / own_username / "style_profile.md").exists()
+    return templates.TemplateResponse(request, "trend.html", {
+        "username": own_username,
+        "batches": batches,
+        "has_profile": has_profile,
+    })
+
+
+@app.post("/api/trend/generate")
+async def api_trend_generate(request: Request):
+    """Kick off a trend research + script generation batch."""
+    with trend_lock:
+        if trend_state["is_running"]:
+            return JSONResponse(
+                {"error": "Trend generation already running"}, status_code=409
+            )
+
+    body = await request.json()
+    own_username = (body.get("own_username") or "").strip().lstrip("@")
+    if not own_username:
+        return JSONResponse({"error": "own_username required"}, status_code=400)
+
+    try:
+        date_window_days = int(body.get("date_window_days", 60))
+    except (TypeError, ValueError):
+        date_window_days = 60
+    try:
+        script_count = int(body.get("script_count", 5))
+    except (TypeError, ValueError):
+        script_count = 5
+
+    date_window_days = max(7, min(180, date_window_days))
+    script_count = max(1, min(15, script_count))
+
+    topic_focus = (body.get("topic_focus") or "").strip()
+    topic_exclude = (body.get("topic_exclude") or "").strip()
+
+    _reset_trend_state()
+    trend_state["is_running"] = True
+
+    thread = threading.Thread(
+        target=_run_trend_generation_bg,
+        args=(
+            own_username, date_window_days, topic_focus, topic_exclude,
+            script_count,
+        ),
+        daemon=True,
+    )
+    thread.start()
+
+    return {"success": True, "message": "Trend generation started"}
+
+
+@app.get("/api/trend/status")
+async def api_trend_status():
+    """Poll trend generation progress."""
+    return dict(trend_state)
+
+
+@app.get("/trend/{own_username}/{batch_date}/research")
+async def trend_research_view(request: Request, own_username: str, batch_date: str):
+    """Render research.md for a trend batch."""
+    rel_path = f"channels/{own_username}/generated_scripts/trend_{batch_date}/research.md"
+    research_path = DATA_DIR / own_username / "generated_scripts" / f"trend_{batch_date}" / "research.md"
+    if not research_path.exists():
+        raise HTTPException(status_code=404, detail="Research not found")
+    return templates.TemplateResponse(request, "report.html", {
+        "username": own_username,
+        "filename": f"trend_{batch_date}/research.md",
+        "content": research_path.read_text(encoding="utf-8"),
+        "back_url": f"/trend/{own_username}/{batch_date}",
+        "download_url": f"/api/download?path={rel_path}",
+        "delete_url": f"/api/trend/{own_username}/{batch_date}/research/delete",
+        "delete_redirect": f"/trend/{own_username}/{batch_date}",
+        "delete_label": "Delete research brief (scripts will remain)",
+    })
+
+
+@app.get("/trend/{own_username}/{batch_date}/{slug}")
+async def trend_script_view(
+    request: Request, own_username: str, batch_date: str, slug: str
+):
+    """Render a single trend script."""
+    rel_path = f"channels/{own_username}/generated_scripts/trend_{batch_date}/{slug}.md"
+    script_path = DATA_DIR / own_username / "generated_scripts" / f"trend_{batch_date}" / f"{slug}.md"
+    if not script_path.exists():
+        raise HTTPException(status_code=404, detail="Trend script not found")
+    return templates.TemplateResponse(request, "report.html", {
+        "username": own_username,
+        "filename": f"trend_{batch_date}/{slug}.md",
+        "content": script_path.read_text(encoding="utf-8"),
+        "back_url": f"/trend/{own_username}/{batch_date}",
+        "download_url": f"/api/download?path={rel_path}",
+        "delete_url": f"/api/trend/{own_username}/{batch_date}/{slug}/delete",
+        "delete_redirect": f"/trend/{own_username}/{batch_date}",
+        "delete_label": f"Delete this script ({slug}.md)",
+    })
+
+
+@app.get("/trend/{own_username}/{batch_date}")
+async def trend_batch_view(request: Request, own_username: str, batch_date: str):
+    """Interactive batch view: lists research + scripts with per-item delete buttons.
+    Regenerates index.md on the fly so the Download Index link stays accurate."""
+    try:
+        scripts = list_trend_batch_scripts(own_username, batch_date)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Trend batch not found")
+
+    # Best-effort index regeneration so the Download Index link is fresh.
+    # Ignore failures (e.g. empty batch) — the page still renders without it.
+    try:
+        generate_trend_index(own_username, batch_date)
+    except ValueError:
+        pass
+
+    batch_dir = DATA_DIR / own_username / "generated_scripts" / f"trend_{batch_date}"
+    has_research = (batch_dir / "research.md").exists()
+
+    return templates.TemplateResponse(request, "trend_batch.html", {
+        "username": own_username,
+        "batch_date": batch_date,
+        "scripts": scripts,
+        "has_research": has_research,
+    })
+
+
+# ============================================================
+# Competitor script viewer
+# ============================================================
 
 
 @app.get("/scripts/{own_username}/{competitor_username}/{date}/{video_id}")
@@ -499,19 +754,23 @@ async def view_script(
     video_id: str,
 ):
     """View a rewritten competitor script."""
-    script_path = (
-        DATA_DIR / own_username / "generated_scripts"
-        / f"competitor_{competitor_username}" / date / f"{video_id}.md"
+    rel_path = (
+        f"channels/{own_username}/generated_scripts/"
+        f"competitor_{competitor_username}/{date}/{video_id}.md"
     )
+    script_path = DATA_DIR / own_username / "generated_scripts" / f"competitor_{competitor_username}" / date / f"{video_id}.md"
     if not script_path.exists():
         raise HTTPException(status_code=404, detail="Script not found")
-
-    content = script_path.read_text(encoding="utf-8")
 
     return templates.TemplateResponse(request, "report.html", {
         "username": competitor_username,
         "filename": f"{video_id}.md",
-        "content": content,
+        "content": script_path.read_text(encoding="utf-8"),
+        "back_url": f"/channel/{competitor_username}",
+        "download_url": f"/api/download?path={rel_path}",
+        "delete_url": f"/api/competitor-script/{own_username}/{competitor_username}/{date}/{video_id}/delete",
+        "delete_redirect": f"/channel/{competitor_username}",
+        "delete_label": f"Delete this rewrite (video {video_id})",
     })
 
 
@@ -607,9 +866,6 @@ async def api_process(request: Request):
     video_ids = body.get("video_ids", [])
     mode = body.get("mode", "self_audit")
     style_profile_username = body.get("style_profile_username")
-    production_style = body.get("production_style", "talking_head")
-    if production_style not in ("talking_head", "editorial"):
-        production_style = "talking_head"
 
     if not username or not video_ids:
         return JSONResponse({"error": "Username and video_ids required"}, status_code=400)
@@ -629,7 +885,7 @@ async def api_process(request: Request):
     else:
         thread = threading.Thread(
             target=_run_competitor_analysis_bg,
-            args=(username, video_ids, style_profile_username, production_style),
+            args=(username, video_ids, style_profile_username),
             daemon=True,
         )
 
@@ -825,6 +1081,156 @@ async def api_download_report(username: str, filename: str):
     if not report_path.exists():
         raise HTTPException(status_code=404, detail="Report not found")
     return FileResponse(report_path, filename=filename, media_type="text/markdown")
+
+
+@app.get("/api/download")
+async def api_download(path: str):
+    """Generic markdown download. `path` is relative to DATA_DIR. Path traversal is blocked."""
+    data_root = DATA_DIR.resolve()
+    target = (DATA_DIR / path).resolve()
+    try:
+        target.relative_to(data_root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Invalid path")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(target, filename=target.name, media_type="text/markdown")
+
+
+# ============================================================
+# Delete endpoints — surfaced via UI for management
+# ============================================================
+
+
+@app.post("/api/trend/{own_username}/{batch_date}/delete")
+async def api_delete_trend_batch(own_username: str, batch_date: str):
+    """Delete a whole trend batch folder (research + all scripts + index)."""
+    target = _safe_channel_path(
+        own_username, "generated_scripts", f"trend_{batch_date}"
+    )
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail="Trend batch not found")
+    shutil.rmtree(target)
+    return {"success": True}
+
+
+@app.post("/api/trend/{own_username}/{batch_date}/{slug}/delete")
+async def api_delete_trend_script(own_username: str, batch_date: str, slug: str):
+    """Delete a single trend script file, or the research brief when slug='research'."""
+    target = _safe_channel_path(
+        own_username, "generated_scripts", f"trend_{batch_date}", f"{slug}.md"
+    )
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Script not found")
+    target.unlink()
+    # Remove stale index — will be regenerated on next batch view
+    index_path = target.parent / "index.md"
+    if index_path.exists():
+        index_path.unlink()
+    # If the batch is now empty, remove the folder too
+    try:
+        if not any(target.parent.iterdir()):
+            target.parent.rmdir()
+    except Exception:
+        pass
+    return {"success": True}
+
+
+@app.post("/api/competitor-batch/{own_username}/{competitor_username}/{date}/delete")
+async def api_delete_competitor_batch(
+    own_username: str, competitor_username: str, date: str
+):
+    """Delete one date folder of competitor rewrites and reset the corresponding
+    processed.json entries so those videos can be re-rewritten."""
+    target = _safe_channel_path(
+        own_username, "generated_scripts",
+        f"competitor_{competitor_username}", date,
+    )
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail="Competitor batch not found")
+    deleted_vids = [p.stem for p in target.glob("*.md")]
+    shutil.rmtree(target)
+    _reset_processed_entries(competitor_username, deleted_vids)
+    # Clean up empty competitor_<name> parent if now empty
+    try:
+        parent = target.parent
+        if parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+    except Exception:
+        pass
+    return {"success": True, "deleted": len(deleted_vids)}
+
+
+@app.post("/api/competitor-script/{own_username}/{competitor_username}/{date}/{video_id}/delete")
+async def api_delete_competitor_script(
+    own_username: str, competitor_username: str, date: str, video_id: str
+):
+    """Delete one rewritten competitor script + reset its processed.json entry."""
+    target = _safe_channel_path(
+        own_username, "generated_scripts",
+        f"competitor_{competitor_username}", date, f"{video_id}.md",
+    )
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Script not found")
+    target.unlink()
+    _reset_processed_entries(competitor_username, [video_id])
+    # Clean up empty date / competitor dirs
+    try:
+        date_dir = target.parent
+        if not any(date_dir.iterdir()):
+            date_dir.rmdir()
+            comp_dir = date_dir.parent
+            if comp_dir.exists() and not any(comp_dir.iterdir()):
+                comp_dir.rmdir()
+    except Exception:
+        pass
+    return {"success": True}
+
+
+@app.post("/api/report/{username}/{filename}/delete")
+async def api_delete_report(username: str, filename: str):
+    """Delete a single file from a channel's reports/ folder."""
+    target = _safe_channel_path(username, "reports", filename)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Report not found")
+    target.unlink()
+    return {"success": True}
+
+
+@app.post("/api/channel/{username}/delete")
+async def api_delete_channel(username: str, request: Request):
+    """Nuke a competitor channel entirely: metadata, scores, transcripts, videos,
+    reports, and any rewritten scripts living under the own user's generated_scripts/.
+    Requires the caller to echo the username as confirmation. Refuses to delete
+    the user's own channel."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    confirmation = (body.get("confirm_username") or "").strip().lstrip("@")
+    if confirmation != username:
+        return JSONResponse(
+            {"error": "Type the exact username to confirm deletion."},
+            status_code=400,
+        )
+    if username == _get_own_username():
+        return JSONResponse(
+            {"error": "This is your own channel — delete the style profile or rescan instead."},
+            status_code=400,
+        )
+    target = _safe_channel_path(username)
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail="Channel not found")
+    shutil.rmtree(target)
+    # Also remove any rewritten scripts the own user has for this competitor
+    own = _get_own_username()
+    if own:
+        comp_scripts = _safe_channel_path(
+            own, "generated_scripts", f"competitor_{username}"
+        )
+        if comp_scripts.exists() and comp_scripts.is_dir():
+            shutil.rmtree(comp_scripts)
+    return {"success": True}
 
 
 # ============================================================

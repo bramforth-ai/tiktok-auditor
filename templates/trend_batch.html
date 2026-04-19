@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trend Batch {{ batch_date }} — @{{ username }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<header class="site-header">
+    <div class="logo">TikTok <em>Auditor</em></div>
+    <div class="header-actions">
+        <a href="/trend/{{ username }}">← All Trend Batches</a>
+        <a href="/api/download?path=channels/{{ username }}/generated_scripts/trend_{{ batch_date }}/index.md" class="btn btn-ghost btn-sm">Download Index .md</a>
+        <button class="btn btn-danger btn-sm" onclick="deleteWholeBatch()">Delete Whole Batch</button>
+    </div>
+</header>
+
+<div class="layout">
+
+    <div class="section-label">Trend Batch — @{{ username }} — {{ batch_date }}</div>
+
+    <!-- Research brief -->
+    <div class="card">
+        <div class="card-title"><span class="icon">◆</span> Research Brief</div>
+        {% if has_research %}
+        <div class="competitor-item" style="position:relative;">
+            <a href="/trend/{{ username }}/{{ batch_date }}/research" style="flex:1; display:flex; justify-content:space-between; align-items:center; text-decoration:none; color:inherit;">
+                <div>
+                    <div class="c-name">research.md</div>
+                    <div class="c-meta">Google-Search-grounded source brief — open to view, or delete if you want to regenerate</div>
+                </div>
+                <span class="c-arrow">→</span>
+            </a>
+            <button class="btn btn-danger btn-sm" style="margin-left:10px;"
+                onclick="event.stopPropagation(); deleteResearch()">
+                Delete
+            </button>
+        </div>
+        {% else %}
+        <p style="color: var(--text-muted);">No research brief in this batch.</p>
+        {% endif %}
+    </div>
+
+    <!-- Scripts -->
+    <div class="card">
+        <div class="card-title"><span class="icon">▦</span> Scripts ({{ scripts|length }})</div>
+        {% if scripts %}
+        <div class="competitor-grid">
+            {% for s in scripts %}
+            <div class="competitor-item" style="position:relative;">
+                <a href="/trend/{{ username }}/{{ batch_date }}/{{ s.stem }}" style="flex:1; display:flex; justify-content:space-between; align-items:center; text-decoration:none; color:inherit;">
+                    <div style="min-width:0;">
+                        <div class="c-name">{{ s.meta.get('topic') or s.stem }}</div>
+                        <div class="c-meta">
+                            <code style="font-size:12px;">{{ s.filename }}</code>
+                            · {{ s.meta.get('hook_type', '?') }}
+                            · {{ s.meta.get('format_tag', '?') }}
+                            · {{ s.meta.get('target_duration_seconds', '?') }}s
+                        </div>
+                    </div>
+                    <span class="c-arrow">→</span>
+                </a>
+                <button class="btn btn-danger btn-sm" style="margin-left:10px;"
+                    onclick="event.stopPropagation(); deleteScript('{{ s.stem }}', '{{ s.filename }}')">
+                    Delete
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color: var(--text-muted);">No scripts in this batch yet.</p>
+        {% endif %}
+    </div>
+
+</div>
+
+<script>
+    const OWN = {{ username | tojson }};
+    const BATCH = {{ batch_date | tojson }};
+
+    async function _postDelete(url, confirmMsg, redirect) {
+        if (!confirm(confirmMsg + '\n\nThis cannot be undone.')) return;
+        try {
+            const res = await fetch(url, { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.success) {
+                window.location.href = redirect;
+            } else {
+                alert('Delete failed: ' + (data.error || ('HTTP ' + res.status)));
+            }
+        } catch (e) {
+            alert('Network error: ' + e.message);
+        }
+    }
+
+    function deleteScript(stem, filename) {
+        _postDelete(
+            `/api/trend/${OWN}/${BATCH}/${stem}/delete`,
+            `Delete script "${filename}"?`,
+            window.location.href
+        );
+    }
+
+    function deleteResearch() {
+        _postDelete(
+            `/api/trend/${OWN}/${BATCH}/research/delete`,
+            `Delete the research brief for batch ${BATCH}? The scripts in this batch will remain.`,
+            window.location.href
+        );
+    }
+
+    function deleteWholeBatch() {
+        _postDelete(
+            `/api/trend/${OWN}/${BATCH}/delete`,
+            `Delete the entire trend batch ${BATCH} (research + all scripts)?`,
+            `/trend/${OWN}`
+        );
+    }
+</script>
+</body>
+</html>

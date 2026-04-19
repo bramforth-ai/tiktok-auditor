@@ -39,6 +39,38 @@ This creator has a specific production style. Stage directions in your rewritten
 
 {production_style_instructions}
 
+## Fact-Check Requirements
+
+**THE TRANSCRIPT IS A LOSSY SOURCE.** It was produced by TikTok auto-captions or automatic speech recognition (Whisper). It regularly mis-hears:
+- Company names (e.g. "OpenAI" → "Open Eye", "DeepSeek" → "Deepsee", brand garbles)
+- People's names
+- Dollar amounts, percentages, user counts, statistics
+- Dates and timeframes
+- Product / model names and version numbers
+- Technical terms and acronyms
+
+Before rewriting, use Google Search to verify every specific factual claim the original makes in these categories:
+- Company / product / people / model names
+- Dollar amounts, user counts, percentages, growth figures, statistics
+- Dates and launch timelines
+- Pricing and feature claims
+- Partnership / acquisition / funding / regulation announcements
+- Benchmark or performance claims
+
+Then apply these rules when writing the rewrite:
+
+1. **Silently correct verified errors.** If the transcript says "$50 million" and search confirms it was "$50 billion," use "$50 billion" in the rewritten script. Do not perpetuate the transcription error.
+
+2. **If a claim cannot be verified via search, do ONE of the following:**
+   - **Rephrase vaguely.** Transcript said "raised $50M Series B from Sequoia in March" and you can't confirm → rewrite as "raised a significant Series B recently" (no specific number or firm).
+   - **Drop the claim** if it isn't essential to the script's hook or payoff.
+   - **Flag explicitly** in Notes as "unverified claim from transcript, retained because it's central to the hook."
+   - **NEVER assert an unverified specific number, name, or date with confidence.** Factual credibility is non-negotiable for this creator — a single wrong figure undermines everything.
+
+3. **Preserve the topic and hook mechanic.** Fact-checking corrects details; it does not change the subject matter. If the transcript is about Tool X and Tool X is real, the rewrite is still about Tool X.
+
+4. **Cite every significant factual claim** in a `## Sources` section at the end of the script (see output format). Include a URL where possible, otherwise a named source (e.g. "TechCrunch 2026-03-15", "Company blog post").
+
 ---
 
 ## Translation Rules
@@ -49,7 +81,12 @@ This creator has a specific production style. Stage directions in your rewritten
 
 3. **Preserve the structural beats.** Identify the original's structure (e.g. hook → problem → demo → resolution → CTA) and replicate that sequence.
 
-4. **Preserve the CTA pattern.** If the original asks viewers to comment a keyword, yours does (in the creator's voice). If the original drives to a community, yours drives to a community.
+4. **Preserve the CTA's *effect*, not its mechanism — and never copy an unscalable CTA.**
+   - Identify what the original CTA is trying to achieve: engagement (comments), saves, shares, follows, community-drive, or a lead-magnet handoff.
+   - If the effect is engagement / save / share / follow, preserve that effect in the creator's voice.
+   - **If the original's mechanism is a lead-magnet handoff — e.g. "comment X and I'll DM you Y," "drop KEYWORD and I'll send the template," anything that requires the creator to respond individually — DO NOT COPY IT.** Substitute with a scalable alternative (opinion prompt, discussion question, save ask, share ask, follow ask, contrarian challenge) and flag the substitution in Notes naming it as an "unscalable CTA substitution."
+   - **Never reference an artifact the creator hasn't declared.** Do not mention "my course," "my newsletter," "my template," "the link in bio," or any specific asset unless the creator's style profile explicitly lists that asset as something the creator promotes. If the original drives to the competitor's owned asset, substitute with a scalable alternative rather than pretending the creator has an equivalent.
+   - If the creator's style profile lists a giveaway-style CTA as a "proven pattern" but the rest of the profile (or the lazy defaults) signals a pivot away from that content era, prefer a scalable alternative and flag it in Notes.
 
 5. **Apply the creator's Voice.** Every line must read like the creator would deliver it. Use their vocabulary register, their signature phrases where natural, their cadence markers, their colloquialisms. If the creator is British and uses "rubbish," use "rubbish," not "nonsense."
 
@@ -67,7 +104,7 @@ This creator has a specific production style. Stage directions in your rewritten
 
 ## Required Output Format
 
-Output markdown only. No code fences wrapping the whole response. Use this exact structure:
+Output markdown only. No code fences wrapping the whole response. Use this exact structure — both versions are required:
 
 ---
 competitor: @{competitor_username}
@@ -87,23 +124,50 @@ generated: {date}
 ## Original Opening (for reference)
 > <quoted from the original transcript, under 30 words>
 
-## Script
+---
+
+## Version A — Talking Head Only
+*No screen recording. Film in one take with zero prep.*
 
 **Hook (0–3s):**
-<the rewritten hook, in the creator's voice, using the same mechanic as the original>
+<hook line in the creator's voice>
 
 **Body:**
-<the rewritten body with [stage directions] inline. Match the original's beat structure. Write in the creator's voice throughout. Keep paragraphs short — one or two sentences each — so the script is readable from a teleprompter.>
+<body using ONLY `[talking head]`, `[green screen: ...]`, `[text overlay: ...]`. For how-to topics, translate any demo into spoken explanation + optional green-screen image. Keep paragraphs short.>
 
 **CTA:**
-<the rewritten CTA, in the creator's voice, using the same mechanic as the original>
-
-## Notes
-<one short paragraph or bullet list covering:
-  - Anti-patterns detected in the original that you replaced (name the anti-pattern AND the substitute you used)
-  - Compression decisions (original duration → target duration and why)
-  - Any structural mechanic the creator should pay special attention to on camera>
+<closing CTA in the creator's voice>
 
 ---
 
-Now produce the rewritten script.
+## Version B — With Screen Recording
+*Same script, but with screen-recording segments where they genuinely add value.*
+
+**Hook (0–3s):**
+<hook line — can be identical to Version A or tweaked if the screen recording reshapes the opening>
+
+**Body:**
+<body that may include `[screen recording: ...]` segments for software/UI/code walkthroughs. Still uses `[talking head]`, `[green screen]`, `[text overlay]` where appropriate. Match the same beat structure as Version A — this is a visual enhancement, not a different script.>
+
+**CTA:**
+<closing CTA>
+
+---
+
+## Notes
+<bullet list covering:
+  - Anti-patterns detected in the original that you replaced (name the anti-pattern AND the substitute you used)
+  - Compression decisions (original duration → target duration and why)
+  - If Version B adds little value over Version A (topic doesn't need a demo), say so explicitly
+  - Any structural mechanic the creator should pay special attention to on camera
+  - **Fact corrections applied** — list every transcription error you fixed using search (e.g. "Transcript said 'Open Eye' → verified company is OpenAI"; "Transcript said '$50M Series B' → verified as $50B valuation per [source]")
+  - **Any unverified claims** you chose to drop, rephrase vaguely, or retain with explicit flag>
+
+## Sources
+<one bullet per significant factual claim that survives in the rewritten script, in either version. Format:
+  - "<short paraphrased claim>" — [Source name](https://url) (retrieved YYYY-MM-DD)
+If a claim came from the original transcript and was confirmed correct, cite where you confirmed it. If search returned no confirmation and the claim was dropped/rephrased, don't cite it here — note it under Notes instead.>
+
+---
+
+Now produce the rewritten script with both versions. Ground every factual claim with live web search before you write it.

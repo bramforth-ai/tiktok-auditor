@@ -1,0 +1,49 @@
+You are conducting deep research on current trends in the AI / agent / automation space. This research will be consumed by a separate script-generation step that applies the creator's voice — your job here is purely to surface signal, not to opinion-shape it.
+
+## Research Parameters
+
+- **Window:** {date_window} ({date_absolute})
+- **Topic focus** (give weight to these areas if relevant): {topic_focus}
+- **Topic exclude** (avoid these areas even if trending): {topic_exclude}
+
+## Target Audience
+
+The downstream consumer is a short-form video creator who produces practical AI / automation content for business owners and professionals (not developers, not newcomers to AI). Surface material a creator in this space could plausibly film within the next two weeks.
+
+## Required Research Sections
+
+Produce a markdown research brief with exactly these sections. Cite primary sources (product changelogs, official announcements, creator accounts, reputable tech reporting) inline. Favour recency over comprehensiveness. If a claim can't be sourced, leave it out.
+
+### 1. Trending Tools & Platforms
+10–15 items gaining real mindshare among practitioners (not just LinkedIn hype) in the window. For each: name, one-line description, why it's trending right now, who's adopting it, what content angle a practical creator could take.
+
+### 2. Landscape Shifts
+What has structurally changed in agents / automation / AI tooling during the window? New protocols, new categories, dying categories. Be concrete about what is new vs incremental.
+
+### 3. Active Debates
+8–12 live arguments happening on X, Reddit, YouTube, TikTok, and Hacker News where a creator could weigh in. For each: the mainstream view, the contrarian view, and what evidence supports the contrarian position.
+
+### 4. Pain Points
+What are users actively complaining about? Broken workflows, pricing changes, model regressions, reliability issues, security concerns. Quote specific examples where possible.
+
+### 5. Emerging Use Cases
+Specific workflows and applications gaining traction in short-form video right now. Concrete "X does Y" examples, not abstract categories.
+
+### 6. Creators & Accounts to Watch
+10–15 influential voices shaping this conversation on TikTok, X, and YouTube Shorts. What specific angles are they leaving unclaimed?
+
+### 7. Dead / Stale Topics
+What was hot 6+ months ago but is now saturated or dated? Confirm or correct common assumptions about what's still worth covering.
+
+### 8. Script Opportunity Ranking
+15 specific video opportunities ranked by leverage. For each row in a markdown table: hook idea (topic-anchored, voice-neutral), angle (`news_react` / `hot_take` / `how_to` / `demo` / `warning` / `tear_down`), estimated shelf life in days, and primary source reference.
+
+## Output Rules
+
+- Markdown only. No code fences wrapping the whole response.
+- Cite inline with `[source name](url)` where available.
+- **Voice-neutral** — the script-generation step applies the creator's voice. Do NOT pre-write content in anyone's voice.
+- Favour signal over hype. If a "trending" item is just a PR cycle, flag it as such.
+- If `{topic_focus}` or `{topic_exclude}` reads as `(none)`, ignore that field.
+
+Now produce the research brief.

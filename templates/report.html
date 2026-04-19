@@ -15,8 +15,11 @@
 <header class="site-header">
     <div class="logo">TikTok <em>Auditor</em></div>
     <div class="header-actions">
-        <a href="/channel/{{ username }}">← Dashboard</a>
-        <a href="/api/report/{{ username }}/{{ filename }}/download" class="btn btn-ghost btn-sm">Download .md</a>
+        <a href="{{ back_url or ('/channel/' ~ username) }}">← Back</a>
+        <a href="{{ download_url or ('/api/report/' ~ username ~ '/' ~ filename ~ '/download') }}" class="btn btn-ghost btn-sm">Download .md</a>
+        {% if delete_url %}
+        <button class="btn btn-danger btn-sm" onclick="deleteCurrent()">Delete</button>
+        {% endif %}
     </div>
 </header>
 
@@ -45,6 +48,24 @@
     // Render the markdown
     const raw = {{ content | tojson }};
     document.getElementById('report-content').innerHTML = marked.parse(raw);
+
+    {% if delete_url %}
+    async function deleteCurrent() {
+        const label = {{ (delete_label or 'Delete this file') | tojson }};
+        if (!confirm(label + '?\n\nThis cannot be undone.')) return;
+        try {
+            const res = await fetch({{ delete_url | tojson }}, { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.success) {
+                window.location.href = {{ (delete_redirect or back_url or '/') | tojson }};
+            } else {
+                alert('Delete failed: ' + (data.error || ('HTTP ' + res.status)));
+            }
+        } catch (e) {
+            alert('Network error: ' + e.message);
+        }
+    }
+    {% endif %}
 </script>
 </body>
 </html>

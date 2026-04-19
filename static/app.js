@@ -197,6 +197,58 @@ async function deleteStyleProfile(username) {
 
 
 // ============================================================
+// Delete — Reports, Competitors
+// ============================================================
+
+async function deleteReport(username, filename) {
+    if (!confirm(`Delete report "${filename}"?\n\nThis cannot be undone.`)) return;
+    try {
+        const resp = await fetch(`/api/report/${username}/${encodeURIComponent(filename)}/delete`, {
+            method: 'POST'
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.success) {
+            notify('Report deleted');
+            window.location.reload();
+        } else {
+            notify(data.error || 'Failed to delete', 'error');
+        }
+    } catch (e) {
+        notify('Error: ' + e.message, 'error');
+    }
+}
+
+async function deleteCompetitor(username) {
+    const msg = `Delete competitor @${username} entirely?\n\n` +
+                `This removes all scanned metadata, transcripts, videos, scorecards, reports, ` +
+                `and any rewritten scripts you have for this channel. This cannot be undone.\n\n` +
+                `Type the username below to confirm.`;
+    const typed = prompt(msg, '');
+    if (typed === null) return;
+    if (typed.trim().replace(/^@/, '') !== username) {
+        notify('Username mismatch — deletion cancelled', 'error');
+        return;
+    }
+    try {
+        const resp = await fetch(`/api/channel/${username}/delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm_username: username }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.success) {
+            notify(`@${username} deleted`);
+            window.location.reload();
+        } else {
+            notify(data.error || 'Failed to delete', 'error');
+        }
+    } catch (e) {
+        notify('Error: ' + e.message, 'error');
+    }
+}
+
+
+// ============================================================
 // Scanning — Competitor
 // ============================================================
 
@@ -530,11 +582,9 @@ async function startProcessing(username, mode, videoIds) {
 
     const body = { username, video_ids: ids, mode };
 
-    // Auto-inject style profile + production style for competitor analysis
+    // Auto-inject style profile for competitor analysis
     if (mode === 'competitor_intel' && window.ownUsername) {
         body.style_profile_username = window.ownUsername;
-        const psEl = document.getElementById('production-style');
-        body.production_style = psEl ? psEl.value : 'talking_head';
     }
 
     try {
