@@ -199,14 +199,25 @@ def generate_trend_scripts(
         response = gemini.call_smart(prompt, json_mode=True)
         payload = json.loads(response)
 
-    scripts = payload.get("scripts", [])
-    if not isinstance(scripts, list) or not scripts:
-        raise ValueError(
-            f"Gemini returned no scripts. Raw response length: {len(response)}."
-        )
-
     batch_dir = _trend_batch_dir(own_username, batch_date)
     batch_dir.mkdir(parents=True, exist_ok=True)
+
+    if isinstance(payload, list):
+        scripts = payload
+    elif isinstance(payload, dict):
+        scripts = payload.get("scripts", [])
+    else:
+        scripts = []
+
+    scripts = [s for s in scripts if isinstance(s, dict)]
+
+    if not scripts:
+        # Persist the raw response so the failure is debuggable instead of opaque.
+        debug_path = batch_dir / "scripts_raw_response.json"
+        debug_path.write_text(response, encoding="utf-8")
+        raise ValueError(
+            f"Gemini returned no usable scripts. Raw response saved to {debug_path}."
+        )
 
     written = []
     for i, script in enumerate(scripts, start=1):
